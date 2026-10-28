@@ -1,4 +1,4 @@
-# torcsRL
+# torcsrl
 
 This repo provides a modern PyTorch implementation/interface for training RL agents in TORCS. It uses a Gymnasium environment interface and provides configurable training and evaluation tracks.
 
