@@ -7,6 +7,14 @@ from gymnasium.spaces import Box
 from torcsrl.models.base import Actor, Critic
 
 
+"""
+NOTE: This code is taken from:
+    For SALE: State-Action Representation Learning for Deep Reinforcement Learning, Fujimoto et al., 2023
+    https://arxiv.org/abs/2306.02451
+    https://github.com/sfujim/TD7
+"""
+
+
 def AvgL1Norm(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return x/x.abs().mean(-1, keepdim=True).clamp(min=eps)
 
@@ -116,7 +124,6 @@ class CriticMLP(Critic):
         q2 = F.elu(self.q5(q2))
         q2 = self.q6(q2)
         return q1, q2
-        # return torch.cat([q1, q2], 1)
 
     def Q1(
         self, 

@@ -14,7 +14,7 @@ from torcsrl.models.td3_networks import ActorMLP, CriticMLP
 
 class NStepTD3(OffPolicyAlgorithm):
     """
-    Twin Delayed Deep Deterministic Policy Gradient Algorithm (TD3).
+    N-Step Twin Delayed Deep Deterministic Policy Gradient Algorithm (TD3).
 
     Reference:
     ----------

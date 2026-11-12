@@ -5,6 +5,14 @@ import torch
 from torcsrl.buffers.base import BufferBase
 
 
+"""
+NOTE: This code is taken from:
+    For SALE: State-Action Representation Learning for Deep Reinforcement Learning, Fujimoto et al., 2023
+    https://arxiv.org/abs/2306.02451
+    https://github.com/sfujim/TD7
+"""
+
+
 class LapReplayBuffer(BufferBase):
     """
     Loss-Adjusted Prioritized Experience Replay.

@@ -15,7 +15,7 @@ from torcsrl.buffers.rollout_buffer import RolloutBuffer
 
 
 class RLAlgorithm(ABC):
-    """Base actor-critic algorithm class.""" 
+    """Base actor-critic algorithm class designed for deep reinforcement learning in TORCS.""" 
     def __init__(
         self,
         train_env: gym.Env,
@@ -222,8 +222,8 @@ class RLAlgorithm(ABC):
             stats.to_csv(save_dir)
 
 
-
 class OffPolicyAlgorithm(RLAlgorithm, ABC):
+    """Base actor-critic off-policy algorithm class designed for deep reinforcement learning in TORCS.""" 
     def __init__(
         self,
         train_env: gym.Env,
@@ -312,6 +312,7 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
 
 
 class OnPolicyAlgorithm(RLAlgorithm, ABC):
+    """Base actor-critic on-policy algorithm class designed for deep reinforcement learning in TORCS.""" 
     def __init__(
         self,
         train_env: gym.Env,

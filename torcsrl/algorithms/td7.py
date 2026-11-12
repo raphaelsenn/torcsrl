@@ -1,5 +1,4 @@
 from typing import Dict, Any
-from collections import deque
 
 import copy
 import torch
@@ -13,6 +12,14 @@ from torcsrl.models.td7_networks import ActorMLP, CriticMLP, EncoderMLP
 
 
 class TD7(OffPolicyAlgorithm):
+    """
+    TD7 Algorithm (TD3 + SALE + LAP).
+
+    Reference:
+    ----------
+    For SALE: State-Action Representation Learning for Deep Reinforcement Learning, Fujimoto et al., 2023
+    https://arxiv.org/abs/2306.02451
+    """
     def __init__(
         self,
         train_env: gym.Env,

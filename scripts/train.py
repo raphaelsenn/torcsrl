@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument("--algorithm", choices=ALGORITHMS, default="td3")
     parser.add_argument("--timesteps", type=int, default=5_000_000)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default="cuda")
     parser.add_argument("--port", type=int, default=3001, help="training env port, validation uses port + 1")
     args = parser.parse_args()
 

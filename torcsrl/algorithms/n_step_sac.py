@@ -15,6 +15,14 @@ from torcsrl.models.sac_networks import ActorMLP, CriticMLP
 
 
 class NStepSAC(OffPolicyAlgorithm):
+    """
+    N-Step Soft Actor-Critic Algorithm (SAC).
+
+    Reference:
+    ----------
+    Soft Actor-Critic Algorithms and Applications, Haarnoja et al., 2018
+    https://arxiv.org/abs/1812.05905
+    """
     def __init__(
         self,
         train_env: gym.Env,
