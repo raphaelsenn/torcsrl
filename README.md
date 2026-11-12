@@ -1,10 +1,6 @@
-<<<<<<< HEAD
-# torcsrl
-=======
 # Deep Reinforcement Learning on TORCS
 
 There are several TORCS reinforcement learning projects, many of them are based on older codebases and use old versions of Keras or TensorFlow.
->>>>>>> 44af3fa (Add vison observations to gym_torcs; refactoring trocsrl/algorithms/base.py; refactoring gym_torcs)
 
 This repo provides a modern PyTorch implementation/interface for training RL agents in TORCS. It uses a Gymnasium environment interface and provides configurable training and evaluation tracks.
 
