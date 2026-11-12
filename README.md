@@ -1,4 +1,10 @@
+<<<<<<< HEAD
 # torcsrl
+=======
+# Deep Reinforcement Learning on TORCS
+
+There are several TORCS reinforcement learning projects, many of them are based on older codebases and use old versions of Keras or TensorFlow.
+>>>>>>> 44af3fa (Add vison observations to gym_torcs; refactoring trocsrl/algorithms/base.py; refactoring gym_torcs)
 
 This repo provides a modern PyTorch implementation/interface for training RL agents in TORCS. It uses a Gymnasium environment interface and provides configurable training and evaluation tracks.
 
@@ -14,6 +20,55 @@ This repo provides a modern PyTorch implementation/interface for training RL age
 * TD3 (N-Step)
 * SAC (N-Step; Not evaluated yet - due to limited compute)
 * TD7 (Not evaluated yet - due to limited compute )
+
+## Environment
+
+|                                    |                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Action Space                       | `Box(-1.0, 1.0, (2,), float32)`                                                                  |
+| Observation Space                  | `Box(-1.0, 1.0, (45,), float32)`                                                                 |
+| Observation Space (`vision=True`)  | `Dict("state": Box(-1.0, 1.0, (45,), float32), "image": Box(0, 255, (H, W, 3), uint8))`          |
+| import                             | `gym.make("TorcsSCR-v0")`                                                                        |
+
+### Action Space
+
+The action is an `ndarray` with shape `(2,)`. Gears are shifted automatically.
+
+| Num | Action                                              | Min  | Max |
+| --- | --------------------------------------------------- | ---- | --- |
+| 0   | Steering, `-1` is full right, `1` is full left      | -1.0 | 1.0 |
+| 1   | Throttle, positive values accelerate, negative brake | -1.0 | 1.0 |
+
+### Observation Space (vector)
+
+The observation is an `ndarray` with shape `(45,)`. Every sensor is scaled to `[-1, 1]` with the constants in `gym_torcs/constants.py`,
+then Gaussian noise (`observation_noise=0.025`) is added and the result is clipped to `[-1, 1]`.
+
+| Num   | Observation                                                                        | Min  | Max | Scaled from          |
+| ----- | ---------------------------------------------------------------------------------- | ---- | --- | -------------------- |
+| 0-2   | Speed along the car's x, y, z axes                                                 | -1.0 | 1.0 | ±250 km/h            |
+| 3-5   | Acceleration along the car's x, y, z axes                                          | -1.0 | 1.0 | ±50 m/s²             |
+| 6     | Engine rpm                                                                         | -1.0 | 1.0 | 0 – 10,000 rpm       |
+| 7     | Angle between the car's heading and the track axis                                 | -1.0 | 1.0 | ±π rad               |
+| 8     | Lateral position on the track, `-1` is the right edge, `1` the left edge           | -1.0 | 1.0 | track width          |
+| 9-27  | 19 track edge range finders at -45°, -19°, -12°, -7°, -4°, -2.5°, -1.7°, -1°, -0.5°, 0°, 0.5°, 1°, 1.7°, 2.5°, 4°, 7°, 12°, 19°, 45° | -1.0 | 1.0 | 0 – 200 m |
+| 28-31 | Wheel spin velocities (front left, front right, rear left, rear right)             | -1.0 | 1.0 | 0 – 100 rad/s        |
+| 32    | Lateral offset from the racing line of the `tita` robot                            | -1.0 | 1.0 | ±2 track half-widths |
+| 33-44 | Racing line curvature 0, 25, 50, ..., 275 m ahead of the car                       | -1.0 | 1.0 | ±0.1 1/m             |
+
+`HistoryWrapper(env, horizon_obs, horizon_act)` stacks the last `horizon_obs` observations and `horizon_act` actions (oldest first),
+giving a `Box(-1.0, 1.0, (45 * horizon_obs + 2 * horizon_act,), float32)`, e.g. `(141,)` for `horizon_obs=3, horizon_act=3`.
+
+### Observation Space (vision)
+
+With `vision=True` (requires `render_mode="human"`) the observation is a `Dict`:
+
+| Key       | Space                                    | Description                                                         |
+| --------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| `"state"` | `Box(-1.0, 1.0, (45,), float32)`         | The vector observation above                                        |
+| `"image"` | `Box(0, 255, (H, W, 3), uint8)`          | RGB image of the TORCS window, `(H, W) = image_shape`, default `(64, 64)` |
+
+`HistoryWrapper` only supports the vector observation.
 
 ## Experiment
 
@@ -45,94 +100,68 @@ Note that due to my limited compute resources, I evaluated only two algorithms: 
 
 ## Usage
 
+### Racing lines
+
+The look-ahead curvature is computed from racing lines recorded with the `tita` robot, stored in `data/<track>.csv`.
+Record them for all experiment tracks (existing files are skipped unless `--overwrite` is given):
+
+```bash
+python scripts/collect_racing_lines.py --laps 10
+python scripts/collect_racing_lines.py forza alpine-2 --overwrite
+```
+
+### Training
+
+`scripts/train.py` trains on the six training tracks, switching track every 50,000 steps, and evaluates on all nine tracks every 10,000 steps.
+Track lists and hyperparameters live in `scripts/configs.py`.
+
+```bash
+python scripts/train.py --algorithm td3 --seed 0 --device cuda   # ddpg, td3, sac, td7
+./scripts/run.sh --device cuda                                   # the README experiment: DDPG and TD3, seeds 0-2
+```
+
+Each environment drives one SCR robot slot, so every environment needs its own port in `3001..3010`.
+The validation env uses `--port + 1`; give parallel runs ports at least two apart.
+Checkpoints and evaluation statistics are written to `./checkpoints`.
+
+### Watching an agent drive
+
+`scripts/evaluate.py` opens the TORCS window and drives a checkpoint on the training and validation tracks, printing lap times and a summary.
+
+```bash
+python scripts/evaluate.py checkpoints/nstepsac/<run>/actor-nstepsac-<step>.pt
+python scripts/evaluate.py <actor.pt> --tracks brondehach alpine-2 --laps 3
+python scripts/evaluate.py --expert --tracks aalborg               # the tita robot, for comparison
+```
+
+### Environment
+
 ```python
 import gymnasium as gym
 import gym_torcs
+from gym_torcs import HistoryWrapper, TimedTrackSelectionWrapper, TrackSpec
 
-from torcsrl import NStepTD3
-from torcsrl.wrappers import TimedTrackSelectionWrapper, TrackSpec, HistoryWrapper
+env = gym.make("TorcsSCR-v0", port=3001, track=TrackSpec("forza", "road"))
+env = HistoryWrapper(env, horizon_obs=3, horizon_act=3)
+env = TimedTrackSelectionWrapper(env, [TrackSpec("forza"), TrackSpec("alpine-1")], switch_every_steps=50_000)
 
-
-train_tracks = [
-    TrackSpec("alpine-1", "road", "alpine_1_tita_expert.csv"),
-    TrackSpec("aalborg", "road", "aalborg_tita_expert.csv"),
-    TrackSpec("street-1", "road", "street_1_tita_expert.csv"),
-    TrackSpec("forza", "road", "forza_tita_expert.csv"),
-    TrackSpec("wheel-1", "road", "wheel_1_tita_expert.csv"),
-    TrackSpec("wheel-2", "road", "wheel_2_tita_expert.csv"),
-]
-
-val_tracks = [
-    # Training tracks
-    TrackSpec("alpine-1", "road"),
-    TrackSpec("aalborg", "road"),
-    TrackSpec("street-1", "road"),
-    TrackSpec("forza", "road"),
-    TrackSpec("wheel-1", "road", "wheel_1_tita_expert.csv"),
-    TrackSpec("wheel-2", "road", "wheel_2_tita_expert.csv"),
-
-    # Validation tracks
-    TrackSpec("g-track-1", "road"),
-    TrackSpec("g-track-2", "road"),
-    TrackSpec("brondehach", "road"),
-    TrackSpec("alpine-2", "road"),
-]
-
-
-SEED = 0
-HORIZON_OBS = 3
-HORIZON_ACT = 3
-SWITCH_TRACK_EVERY = 50_000
-
-train_env = gym.make(
-    "TorcsSCR-v0",
-    render_mode=None,
-    port=3001,
-    race_type="practice",
-    track_name="alpine-1",
-    track_category="road",
-    reset_strategy="relaunch",
-    racing_line_csv="alpine_1_tita_expert.csv",
-)
-train_env = TimedTrackSelectionWrapper(
-    train_env, tracks=train_tracks, switch_every_steps=SWITCH_TRACK_EVERY,
-)
-train_env = HistoryWrapper(train_env, HORIZON_OBS, HORIZON_ACT)
-
-
-val_env = gym.make(
-    "TorcsSCR-v0",
-    render_mode=None,
-    port=3002,
-    race_type="practice",
-    track_name="alpine-2",
-    track_category="road",
-    reset_strategy="relaunch",
-    racing_line_csv="alpine_2_tita_expert.csv",
-)
-val_env = HistoryWrapper(val_env, HORIZON_OBS, HORIZON_ACT)
-val_env = TimedTrackSelectionWrapper(
-    val_env, val_tracks, switch_every_steps=1
-)
-
-alg = NStepTD3(
-    train_env,
-    val_env,
-    n_steps=3,
-    lr_actor=3e-4,
-    lr_critic=3e-4,
-    buffer_size=3_000_000,
-    buffer_start_size=25_000,
-    batch_size=256,
-    tau_polyak=0.005,
-    save_every=10_000,
-    eval_every=10_000,
-    device="cuda",
-    seed=seed,
-)
-
-alg.train(5_000_000)
+obs, info = env.reset(seed=0)
+obs, reward, terminated, truncated, info = env.step(info["action_tita"])  # tita's action
 ```
+
+### Vision
+
+```python
+env = gym.make("TorcsSCR-v0", render_mode="human", vision=True, image_shape=(64, 64))
+obs, info = env.reset()
+obs["state"]  # (45,) float32
+obs["image"]  # (64, 64, 3) uint8 RGB
+```
+
+Frames are copied from the TORCS window through shared memory, so vision needs `render_mode="human"`,
+a visible window and `xte` (package `xautomation`) to start the race.
+TORCS writes about ten frames per simulated second, while the agent acts 50 times per second.
+Only one vision environment can run per machine.
 
 ## Install
 

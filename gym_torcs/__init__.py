@@ -1,12 +1,9 @@
-from __future__ import annotations
-
 from gymnasium.envs.registration import register
 
-from .env import TorcsEnv
+from gym_torcs.env import TorcsEnv
+from gym_torcs.server import TrackSpec
+from gym_torcs.wrappers import HistoryWrapper, TimedTrackSelectionWrapper
 
-register(
-    id="TorcsSCR-v0",
-    entry_point=f"{__name__}.env:TorcsEnv",
-)
+register(id="TorcsSCR-v0", entry_point="gym_torcs.env:TorcsEnv")
 
-__all__ = ["TorcsEnv"]
+__all__ = ["HistoryWrapper", "TimedTrackSelectionWrapper", "TorcsEnv", "TrackSpec"]

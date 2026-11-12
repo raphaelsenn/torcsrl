@@ -2,7 +2,6 @@ from typing import Dict, Any
 from collections import deque
 
 import copy
-import time
 import torch
 import torch.nn.functional as F
 import gymnasium as gym
@@ -155,10 +154,6 @@ class NStepDDPG(OffPolicyAlgorithm):
         self.grad_step_counter = 1
         self.global_step_counter = 1
 
-        should_eval = False
-        should_save = False
-        start_time = time.monotonic()
-
         for _ in range(0, n_timesteps):
             # Choose action and step environment. 
             action = self.act_numpy(obs, deterministic=False)
@@ -179,14 +174,8 @@ class NStepDDPG(OffPolicyAlgorithm):
             self.n_gradient_steps()             # NOTE: Gradient update
             obs = obs_next                      # NOTE: Obs update
             
-            if self.global_step_counter % self.eval_every == 0:
-                should_eval = True
-
-            if self.global_step_counter % self.save_every == 0:
-                should_save = True
-
             if terminated or truncated:
-                should_eval, should_save, start_time = self.on_episode_end(should_eval, should_save, start_time)
+                self.on_episode_end()           # NOTE: Evaluate/save if due
                 self.episode_counter += 1       # NOTE: INCREASE EPISODE STEP COUNTER
                 obs, info = self.env.reset()
 

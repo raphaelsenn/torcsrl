@@ -1,193 +1,96 @@
+"""UDP client for the SCR server robot of TORCS.
+
+Protocol adapted from https://github.com/ugo-nama-kun/gym_torcs
+"""
+
 from __future__ import annotations
 
 import socket
 import time
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from gym_torcs.constants import TRACK_SENSOR_ANGLES
 
-"""
-NOTE: This code is mostly taken from: 
-https://github.com/ugo-nama-kun/gym_torcs
-https://github.com/giuse/vtorcs
-https://github.com/dosssman/GymTorcs
-"""
+BUFFER_SIZE = 2**17
 
-DATA_SIZE = 2**17
-
-
-def _clean_token(value: str) -> str:
-    return value.strip().strip("()").strip("\x00")
-
-
-def _parse_value(values: list[str]) -> float | list[float] | str:
-    values = [_clean_token(v) for v in values if _clean_token(v) != ""]
-
-    if len(values) == 1:
-        try:
-            return float(values[0])
-        except ValueError:
-            return values[0]
-
-    return [float(v) for v in values]
+Sensors = dict[str, float | list[float]]
 
 
 @dataclass(slots=True)
-class ServerState:
-    data: dict[str, Any] = field(default_factory=dict)
-
-    def parse(self, message: str) -> dict[str, Any]:
-        body = message.strip().strip("\x00").strip()
-
-        if body.startswith("("):
-            body = body[1:]
-
-        if body.endswith(")"):
-            body = body[:-1]
-
-        parsed: dict[str, Any] = {}
-
-        for item in body.split(")("):
-            if not item:
-                continue
-
-            item = item.strip().strip("()").strip("\x00")
-            parts = item.split()
-
-            if len(parts) < 2:
-                continue
-
-            parsed[parts[0]] = _parse_value(parts[1:])
-
-        self.data = parsed
-        return parsed
-
-
-@dataclass(slots=True)
-class DriverAction:
+class Action:
     steer: float = 0.0
     accel: float = 0.0
     brake: float = 0.0
-    clutch: float = 0.0
     gear: int = 1
-    meta: int = 0
-    focus: tuple[float, ...] = (-90.0, -45.0, 0.0, 45.0, 90.0)
-
-    def reset(self) -> None:
-        self.steer = 0.0
-        self.accel = 0.0
-        self.brake = 0.0
-        self.clutch = 0.0
-        self.gear = 1
-        self.meta = 0
 
     def encode(self) -> bytes:
-        steer = min(max(float(self.steer), -1.0), 1.0)
-        accel = min(max(float(self.accel), 0.0), 1.0)
-        brake = min(max(float(self.brake), 0.0), 1.0)
-        clutch = min(max(float(self.clutch), 0.0), 1.0)
-        gear = int(self.gear) if int(self.gear) in {-1, 0, 1, 2, 3, 4, 5, 6} else 0
-        meta = int(self.meta) if int(self.meta) in {0, 1} else 0
-        focus = " ".join(str(x) for x in self.focus)
         return (
-            f"(accel {accel:.3f})"
-            f"(brake {brake:.3f})"
-            f"(clutch {clutch:.3f})"
-            f"(gear {gear})"
-            f"(steer {steer:.3f})"
-            f"(focus {focus})"
-            f"(meta {meta})"
+            f"(accel {self.accel:.3f})(brake {self.brake:.3f})(clutch 0.000)"
+            f"(gear {self.gear})(steer {self.steer:.3f})"
+            f"(focus -90 -45 0 45 90)(meta 0)"
         ).encode()
 
 
+def parse_sensors(message: str) -> Sensors:
+    """Parse a message like ``(angle 0.01)(track 7.3 8.1 ...)``."""
+    sensors: Sensors = {}
+    for item in message.strip("\x00 ").strip("()").split(")("):
+        parts = item.split()
+        if len(parts) < 2:
+            continue
+        name, *values = parts
+        numbers = [float(v) for v in values]
+        sensors[name] = numbers[0] if len(numbers) == 1 else numbers
+    return sensors
+
+
 class TorcsClient:
-    def __init__(
-        self,
-        *,
-        host: str = "127.0.0.1",
-        port: int = 3001,
-        client_id: str = "SCR",
-        timeout: float = 2.0,
-        connect_attempts: int = 120,
-    ) -> None:
-        self.host = host
-        self.port = port
-        self.client_id = client_id
-        self.timeout = timeout
-        self.connect_attempts = connect_attempts
-        self.state = ServerState()
-        self.action = DriverAction()
-        self.socket: socket.socket | None = None
+    def __init__(self, host: str, port: int, socket_timeout: float = 2.0) -> None:
+        self.address = (host, port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(socket_timeout)
 
-    def connect(self) -> None:
-        self.close()
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.settimeout(self.timeout)
-
+    def connect(self, timeout: float) -> None:
         angles = " ".join(str(a) for a in TRACK_SENSOR_ANGLES)
-        init = f"{self.client_id}(init {angles})".encode()
+        handshake = f"SCR(init {angles})".encode()
 
-        for _ in range(self.connect_attempts):
-            self.socket.sendto(init, (self.host, self.port))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.sock.sendto(handshake, self.address)
             try:
-                payload, _ = self.socket.recvfrom(DATA_SIZE)
+                data, _ = self.sock.recvfrom(BUFFER_SIZE)
             except socket.timeout:
-                time.sleep(0.1)
                 continue
-            if "***identified***" in payload.decode("utf-8", errors="replace"):
+            if b"***identified***" in data:
                 return
 
-        raise TimeoutError(
-            f"TORCS SCR server did not answer at {self.host}:{self.port}. "
-            "The race is not running, the SCR robot is not selected, or the port is wrong."
-        )
+        raise TimeoutError(f"No SCR server answered on {self.address[0]}:{self.address[1]}.")
 
-    def receive(self, *, max_wait: float | None = None, keepalive: bool = False) -> dict[str, Any]:
-        """Receive one SCR sensor packet.
+    def receive(self, timeout: float, keepalive: Action | None = None) -> Sensors:
+        """Wait for the next sensor message.
 
-        GUI startup can be slow and TORCS may print "Timeout for client answer"
-        while the Python side is still waiting for the first telemetry packet.
-        When ``keepalive`` is enabled, we send the current neutral action after
-        every socket timeout. This keeps the SCR server moving until the first
-        real sensor packet arrives.
+        While the race is still loading, TORCS gives up on clients that stay
+        silent. Passing ``keepalive`` resends that action on every socket timeout.
         """
-        if self.socket is None:
-            raise RuntimeError("connect() must be called before receive().")
-
-        deadline = None if max_wait is None else time.monotonic() + max_wait
-        while True:
-            if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Timed out waiting for TORCS telemetry at {self.host}:{self.port}. "
-                    "The SCR race is running, but no sensor packet was received."
-                )
-
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             try:
-                payload, _ = self.socket.recvfrom(DATA_SIZE)
+                data, _ = self.sock.recvfrom(BUFFER_SIZE)
             except socket.timeout:
-                if keepalive:
-                    self.send()
+                if keepalive is not None:
+                    self.send(keepalive)
                 continue
 
-            msg = payload.decode("utf-8", errors="replace")
-            if not msg or "***identified***" in msg:
-                continue
-            if "***shutdown***" in msg or "***restart***" in msg:
-                raise ConnectionError(msg.strip())
-            return self.state.parse(msg)
+            message = data.decode(errors="replace")
+            if "***shutdown***" in message or "***restart***" in message:
+                raise ConnectionError(message.strip("\x00 "))
+            if message and "***identified***" not in message:
+                return parse_sensors(message)
 
-    def send(self) -> None:
-        if self.socket is None:
-            raise RuntimeError("connect() must be called before send().")
-        self.socket.sendto(self.action.encode(), (self.host, self.port))
+        raise TimeoutError(f"No sensor data from {self.address[0]}:{self.address[1]}.")
 
-    def restart_race(self) -> None:
-        self.action.meta = 1
-        self.send()
-        self.action.meta = 0
+    def send(self, action: Action) -> None:
+        self.sock.sendto(action.encode(), self.address)
 
     def close(self) -> None:
-        if self.socket is not None:
-            self.socket.close()
-            self.socket = None
+        self.sock.close()

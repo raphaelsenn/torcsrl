@@ -77,14 +77,13 @@ class RLAlgorithm(ABC):
         self.grad_step_counter = 0
         self.global_step_counter = 0
 
-        # Evaluation
+        # Evaluation stats, one entry per validation track ("category/name")
         self.eval_stats: dict[str, EvluationStats] = {}
-        if hasattr(self.val_env, "tracks"):
-            for track in self.val_env.tracks:
-                key = f"{track.category}/{track.name}"
-                self.eval_stats[key] = EvluationStats()
-        else:
-            self.eval_stats["eval"] = EvluationStats()
+
+        # Evaluating/saving is due once these steps are reached (see on_episode_end)
+        self.next_eval_step = eval_every
+        self.next_save_step = save_every
+        self.last_eval_time = time.monotonic()
 
         # Reproducability
         self.seed = seed 
@@ -113,62 +112,40 @@ class RLAlgorithm(ABC):
 
     @torch.no_grad()
     def evaluate(self) -> None:
-        env = self.val_env
+        """Drive one deterministic episode on every validation track and record the stats."""
+        n_tracks = len(getattr(self.val_env, "tracks", [None]))
 
-        if hasattr(env, "tracks"):
-            n_eval_tracks = len(env.tracks)
-        else:
-            n_eval_tracks = 1
+        for episode in range(n_tracks):
+            obs, reset_info = self.val_env.reset(seed=self.seed + episode + 1)
 
-        for episode in range(n_eval_tracks):
-            eval_seed = self.seed + episode + 1
-            obs, reset_info = env.reset(seed=eval_seed)
-
-            track = reset_info.get("track", None)
-            if track is not None:
-                track_name = str(track["name"])
-                track_category = str(track["category"])
-                track_key = f"{track_category}/{track_name}"
-            else:
-                track_key = "eval"
-
-            if track_key not in self.eval_stats:
-                self.eval_stats[track_key] = EvluationStats()
+            track = reset_info.get("track")
+            track_key = f"{track['category']}/{track['name']}" if track else "eval"
 
             done = False
             n_steps = 0
             speed_sum = 0.0
             episode_reward = 0.0
-            last_info = {}
 
             while not done:
                 action = self.act_numpy(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = env.step(action)
-
+                obs, reward, terminated, truncated, info = self.val_env.step(action)
                 done = terminated or truncated
-                n_steps += 1
 
+                n_steps += 1
                 episode_reward += reward
                 speed_sum += float(info.get("speedX", 0.0))
-                last_info = info
 
-            rewards = np.asarray([episode_reward], dtype=np.float32)
-            distance = np.asarray([float(last_info.get("distRaced", 0.0))], dtype=np.float32)
-            time_alive = np.asarray([float(last_info.get("timeAlive", 0.0))], dtype=np.float32)
-            mean_speed = np.asarray([speed_sum / max(n_steps, 1)], dtype=np.float32)
-            successful = np.asarray([int(last_info.get("successfulLap", False))], dtype=np.uint8)
-            damage = np.asarray([float(last_info.get("damage", 0.0))], dtype=np.float32)
-            lap_time = np.asarray(float(last_info.get("lastLapTime", 0.0)), dtype=np.float32)
-
-            self.eval_stats[track_key].update(
+            # NOTE: `info` now holds the info of the last step of the episode
+            stats = self.eval_stats.setdefault(track_key, EvluationStats())
+            stats.update(
                 step=self.global_step_counter,
-                rewards=rewards,
-                distance=distance,
-                time_alive=time_alive,
-                mean_speed=mean_speed,
-                successful=successful,
-                damage=damage,
-                lap_time=lap_time
+                rewards=episode_reward,
+                distance=float(info.get("distRaced", 0.0)),
+                time_alive=float(info.get("timeAlive", 0.0)),
+                mean_speed=speed_sum / n_steps,
+                successful=int(info.get("successfulLap", False)),
+                damage=float(info.get("damage", 0.0)),
+                lap_time=float(info.get("lastLapTime", 0.0)),
             )
 
     def set_seeds(self) -> None:
@@ -182,32 +159,30 @@ class RLAlgorithm(ABC):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    def on_episode_end(
-        self,
-        pending_eval: bool,
-        pending_save: bool,
-        start_time: float,
-    ) -> tuple[bool, bool, float]:
-        if pending_eval:
+    def on_episode_end(self) -> None:
+        """Call this when a training episode ends: evaluates and/or saves if due.
+
+        Evaluating/saving only happens between episodes, so a running episode
+        on the TORCS server is never interrupted.
+        """
+        step = self.global_step_counter
+
+        if step >= self.next_eval_step:
             self.evaluate()
 
-            elapsed = time.monotonic() - start_time
-            start_time = time.monotonic()
-
             if self.verbose:
-                self.print_stats(elapsed)
+                self.print_stats(time.monotonic() - self.last_eval_time)
+            self.last_eval_time = time.monotonic()
 
-            # Save exact model that produced printed eval stats
+            # Save the exact model that produced the printed eval stats
             self.save()
 
-            pending_eval = False
-            pending_save = False
+            self.next_eval_step = (step // self.eval_every + 1) * self.eval_every
+            self.next_save_step = (step // self.save_every + 1) * self.save_every
 
-        elif pending_save:
+        elif step >= self.next_save_step:
             self.save()
-            pending_save = False
-
-        return pending_eval, pending_save, start_time
+            self.next_save_step = (step // self.save_every + 1) * self.save_every
 
     def print_stats(self, time: float) -> None:
         header = (

@@ -1,3 +1,8 @@
+"""Curvature of a racing line recorded over several laps.
+
+Method adapted from https://github.com/dergestaler/estimate_curvatures
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,10 +12,8 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-"""
-NOTE: This implementation is completly taken from
-* https://github.com/dergestaler/estimate_curvatures
-"""
+MIN_LAP_SAMPLES = 50
+
 
 @dataclass(slots=True)
 class RacingLineCurvatureMap:
@@ -34,194 +37,129 @@ class RacingLineCurvatureMap:
         min_lap_coverage: float = 0.90,
         outlier_sigma: float = 3.5,
         max_abs_curvature: float = 0.5,
-    ) -> "RacingLineCurvatureMap":
-        df = pd.read_csv(csv_path)
+    ) -> RacingLineCurvatureMap:
+        """Build the map from a CSV with one row per time step of a driven line.
 
-        missing = [c for c in (x_col, y_col, dist_col) if c not in df.columns]
-        if missing:
-            raise ValueError(
-                f"{csv_path} is missing columns {missing}. Found: {list(df.columns)}"
-            )
+        Each lap is resampled every ``spacing`` meters. Incomplete laps and laps
+        with position jumps are dropped, and the remaining laps are merged into
+        one line by an outlier robust median before the curvature is computed.
+        """
+        df = pd.read_csv(csv_path, usecols=[x_col, y_col, dist_col])
+        df = df[np.isfinite(df.to_numpy()).all(axis=1)]
+        x, y, dist = (df[col].to_numpy(dtype=np.float64) for col in (x_col, y_col, dist_col))
 
-        x_raw = df[x_col].to_numpy(dtype=np.float64)
-        y_raw = df[y_col].to_numpy(dtype=np.float64)
-        d_raw = df[dist_col].to_numpy(dtype=np.float64)
-
-        valid = np.isfinite(x_raw) & np.isfinite(y_raw) & np.isfinite(d_raw)
-        x_raw = x_raw[valid]
-        y_raw = y_raw[valid]
-        d_raw = d_raw[valid]
-
-        if len(d_raw) < 50:
-            raise ValueError(f"Not enough valid racing-line points in {csv_path}")
-
-        # Estimate track length
-        rough_track_length = float(np.nanpercentile(d_raw, 99.9))
-        if rough_track_length <= 1.0:
-            raise ValueError(f"Invalid track length from {csv_path}: {rough_track_length}")
-
-        wraps = np.where(np.diff(d_raw) < -0.5 * rough_track_length)[0] + 1
-        lap_starts = np.concatenate([[0], wraps])
-        lap_ends = np.concatenate([wraps, [len(d_raw)]])
-
-        # Use the median of completed lap maxima as track length
-        lap_maxima = []
-        for start, end in zip(lap_starts, lap_ends):
-            d_lap = d_raw[start:end]
-            if len(d_lap) >= 50:
-                lap_maxima.append(float(np.max(d_lap)))
-
-        if not lap_maxima:
+        laps = [lap for lap in _split_laps(dist) if lap.stop - lap.start >= MIN_LAP_SAMPLES]
+        if not laps:
             raise ValueError(f"No usable laps found in {csv_path}")
 
-        track_length = float(np.median(lap_maxima))
+        track_length = float(np.median([dist[lap].max() for lap in laps]))
         if track_length <= 1.0:
-            raise ValueError(f"Invalid track length from {csv_path}: {track_length}")
+            raise ValueError(f"Invalid track length {track_length} in {csv_path}")
 
-        s_grid = np.arange(0.0, track_length, spacing, dtype=np.float64)
+        s = np.arange(0.0, track_length, spacing)
+        resampled = [
+            _resample_lap(dist[lap], x[lap], y[lap], s, track_length, min_lap_coverage, max_step_xy)
+            for lap in laps
+        ]
+        resampled = [lap for lap in resampled if lap is not None]
+        if len(resampled) < 2:
+            raise ValueError(f"Only {len(resampled)} usable laps found in {csv_path}")
 
-        lap_xs: list[np.ndarray] = []
-        lap_ys: list[np.ndarray] = []
+        xs = np.stack([lap[0] for lap in resampled])
+        ys = np.stack([lap[1] for lap in resampled])
+        x_line, y_line = _robust_median_line(xs, ys, outlier_sigma)
 
-        for start, end in zip(lap_starts, lap_ends):
-            d_lap = d_raw[start:end]
-            x_lap = x_raw[start:end]
-            y_lap = y_raw[start:end]
+        x_line = _circular_moving_average(x_line, smoothing_window)
+        y_line = _circular_moving_average(y_line, smoothing_window)
 
-            if len(d_lap) < 50:
-                continue
-
-            # Sort by distFromStart inside lap
-            order = np.argsort(d_lap)
-            d_lap = d_lap[order]
-            x_lap = x_lap[order]
-            y_lap = y_lap[order]
-
-            # Remove duplicate or non-increasing distance samples
-            keep = np.concatenate([[True], np.diff(d_lap) > 1e-6])
-            d_lap = d_lap[keep]
-            x_lap = x_lap[keep]
-            y_lap = y_lap[keep]
-
-            if len(d_lap) < 50:
-                continue
-
-            # Reject incomplete laps
-            coverage = (float(np.max(d_lap)) - float(np.min(d_lap))) / track_length
-            if coverage < min_lap_coverage:
-                continue
-
-            # Reject laps with impossible XY jumps
-            step_xy = np.hypot(np.diff(x_lap), np.diff(y_lap))
-            if np.nanmax(step_xy) > max_step_xy:
-                continue
-
-            # Periodic interpolation
-            d_ext = np.concatenate([[d_lap[-1] - track_length], d_lap, [d_lap[0] + track_length]])
-            x_ext = np.concatenate([[x_lap[-1]], x_lap, [x_lap[0]]])
-            y_ext = np.concatenate([[y_lap[-1]], y_lap, [y_lap[0]]])
-
-            x_interp = np.interp(s_grid, d_ext, x_ext)
-            y_interp = np.interp(s_grid, d_ext, y_ext)
-
-            if np.all(np.isfinite(x_interp)) and np.all(np.isfinite(y_interp)):
-                lap_xs.append(x_interp)
-                lap_ys.append(y_interp)
-
-        if len(lap_xs) < 2:
-            raise ValueError(
-                f"Only {len(lap_xs)} usable laps found in {csv_path}. "
-                f"CSV likely contains broken/incomplete laps."
-            )
-
-        xs = np.stack(lap_xs, axis=0)
-        ys = np.stack(lap_ys, axis=0)
-
-        # Robust centerline: median first.
-        x_med = np.median(xs, axis=0)
-        y_med = np.median(ys, axis=0)
-
-        # Reject per-sample lap outliers based on distance to median position
-        dist_to_med = np.hypot(xs - x_med[None, :], ys - y_med[None, :])
-        med_dist = np.median(dist_to_med, axis=0)
-        mad_dist = np.median(np.abs(dist_to_med - med_dist[None, :]), axis=0)
-        robust_std = 1.4826 * mad_dist + 1e-6
-
-        inlier = dist_to_med <= (med_dist[None, :] + outlier_sigma * robust_std[None, :])
-
-        xs_clean = np.where(inlier, xs, np.nan)
-        ys_clean = np.where(inlier, ys, np.nan)
-
-        x_path = np.nanmedian(xs_clean, axis=0)
-        y_path = np.nanmedian(ys_clean, axis=0)
-
-        # Fallback if all values were NaN somewhere.
-        bad = ~np.isfinite(x_path) | ~np.isfinite(y_path)
-        x_path[bad] = x_med[bad]
-        y_path[bad] = y_med[bad]
-
-        if smoothing_window > 1:
-            x_path = cls._circular_moving_average(x_path, smoothing_window)
-            y_path = cls._circular_moving_average(y_path, smoothing_window)
-
-        curvature = cls._finite_difference_curvature(
-            x_path,
-            y_path,
-            spacing=spacing,
-        )
-
-        curvature = np.nan_to_num(curvature, nan=0.0, posinf=0.0, neginf=0.0)
-        curvature = np.clip(curvature, -max_abs_curvature, max_abs_curvature)
+        curvature = _curvature(x_line, y_line, spacing)
+        curvature = np.clip(np.nan_to_num(curvature, nan=0.0, posinf=0.0, neginf=0.0),
+                            -max_abs_curvature, max_abs_curvature)
 
         return cls(
-            s=s_grid.astype(np.float32),
-            x=x_path.astype(np.float32),
-            y=y_path.astype(np.float32),
+            s=s.astype(np.float32),
+            x=x_line.astype(np.float32),
+            y=y_line.astype(np.float32),
             curvature=curvature.astype(np.float32),
             track_length=track_length,
         )
 
-    @staticmethod
-    def _circular_moving_average(values: np.ndarray, window: int) -> np.ndarray:
-        window = int(window)
-        if window <= 1:
-            return values.copy()
-
-        # Force odd window for centered smoothing.
-        if window % 2 == 0:
-            window += 1
-
-        pad = window // 2
-        padded = np.concatenate([values[-pad:], values, values[:pad]])
-        kernel = np.ones(window, dtype=np.float64) / window
-        return np.convolve(padded, kernel, mode="valid")
-
-    @staticmethod
-    def _finite_difference_curvature(x: np.ndarray, y: np.ndarray, *, spacing: float) -> np.ndarray:
-        # Periodic central differences.
-        x_prev = np.roll(x, 1)
-        x_next = np.roll(x, -1)
-        y_prev = np.roll(y, 1)
-        y_next = np.roll(y, -1)
-
-        dx = (x_next - x_prev) / (2.0 * spacing)
-        dy = (y_next - y_prev) / (2.0 * spacing)
-        ddx = (x_next - 2.0 * x + x_prev) / (spacing * spacing)
-        ddy = (y_next - 2.0 * y + y_prev) / (spacing * spacing)
-
-        denom = (dx * dx + dy * dy) ** 1.5
-        curvature = np.zeros_like(x, dtype=np.float64)
-        good = denom > 1e-6
-        curvature[good] = (dx[good] * ddy[good] - dy[good] * ddx[good]) / denom[good]
-
-        return curvature
-
     def lookahead(self, dist_from_start: float, distances: float | Sequence[float] | np.ndarray) -> np.ndarray:
-        distances = np.asarray(distances, dtype=np.float64)
-        query = (float(dist_from_start) + distances) % self.track_length
-        return np.interp(
-            query,
-            self.s,
-            self.curvature,
-            period=self.track_length,
-        ).astype(np.float32)
+        """Curvature at the given distances ahead of ``dist_from_start``."""
+        query = (dist_from_start + np.asarray(distances, dtype=np.float64)) % self.track_length
+        return np.interp(query, self.s, self.curvature, period=self.track_length).astype(np.float32)
+
+
+def _split_laps(dist: np.ndarray) -> list[slice]:
+    """Split where the distance from the start line jumps back to zero."""
+    approx_length = np.percentile(dist, 99.9)
+    wraps = np.flatnonzero(np.diff(dist) < -0.5 * approx_length) + 1
+    bounds = [0, *wraps, len(dist)]
+    return [slice(start, stop) for start, stop in zip(bounds[:-1], bounds[1:])]
+
+
+def _resample_lap(
+    dist: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    s: np.ndarray,
+    track_length: float,
+    min_coverage: float,
+    max_step: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    order = np.argsort(dist)
+    dist, x, y = dist[order], x[order], y[order]
+
+    increasing = np.concatenate([[True], np.diff(dist) > 1e-6])
+    dist, x, y = dist[increasing], x[increasing], y[increasing]
+
+    if len(dist) < MIN_LAP_SAMPLES:
+        return None
+    if (dist[-1] - dist[0]) / track_length < min_coverage:
+        return None
+    if np.max(np.hypot(np.diff(x), np.diff(y))) > max_step:
+        return None
+
+    # Pad with the neighbouring samples across the start line so interpolation wraps.
+    dist = np.concatenate([[dist[-1] - track_length], dist, [dist[0] + track_length]])
+    x = np.concatenate([[x[-1]], x, [x[0]]])
+    y = np.concatenate([[y[-1]], y, [y[0]]])
+    return np.interp(s, dist, x), np.interp(s, dist, y)
+
+
+def _robust_median_line(xs: np.ndarray, ys: np.ndarray, outlier_sigma: float) -> tuple[np.ndarray, np.ndarray]:
+    """Per-point median over laps, ignoring laps that stray far from the plain median."""
+    x_median = np.median(xs, axis=0)
+    y_median = np.median(ys, axis=0)
+
+    deviation = np.hypot(xs - x_median, ys - y_median)
+    typical = np.median(deviation, axis=0)
+    robust_std = 1.4826 * np.median(np.abs(deviation - typical), axis=0) + 1e-6
+    inlier = deviation <= typical + outlier_sigma * robust_std
+
+    x_line = np.nanmedian(np.where(inlier, xs, np.nan), axis=0)
+    y_line = np.nanmedian(np.where(inlier, ys, np.nan), axis=0)
+    return x_line, y_line
+
+
+def _circular_moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1:
+        return values.copy()
+    pad = window // 2
+    window = 2 * pad + 1
+    padded = np.concatenate([values[-pad:], values, values[:pad]])
+    return np.convolve(padded, np.ones(window) / window, mode="valid")
+
+
+def _curvature(x: np.ndarray, y: np.ndarray, spacing: float) -> np.ndarray:
+    """Signed curvature of a closed curve from periodic central differences."""
+    dx = (np.roll(x, -1) - np.roll(x, 1)) / (2.0 * spacing)
+    dy = (np.roll(y, -1) - np.roll(y, 1)) / (2.0 * spacing)
+    ddx = (np.roll(x, -1) - 2.0 * x + np.roll(x, 1)) / spacing**2
+    ddy = (np.roll(y, -1) - 2.0 * y + np.roll(y, 1)) / spacing**2
+
+    speed_cubed = (dx**2 + dy**2) ** 1.5
+    curvature = np.zeros_like(x)
+    moving = speed_cubed > 1e-6
+    curvature[moving] = (dx * ddy - dy * ddx)[moving] / speed_cubed[moving]
+    return curvature
