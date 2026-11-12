@@ -35,7 +35,7 @@ The action is an `ndarray` with shape `(2,)`. Gears are shifted automatically.
 | 0   | Steering, `-1` is full right, `1` is full left      | -1.0 | 1.0 |
 | 1   | Throttle, positive values accelerate, negative brake | -1.0 | 1.0 |
 
-### Observation Space (vector)
+### Observation Space (proprioceptive state-vector)
 
 The observation is an `ndarray` with shape `(45,)`. Every sensor is scaled to `[-1, 1]` with the constants in `gym_torcs/constants.py`,
 then Gaussian noise (`observation_noise=0.025`) is added and the result is clipped to `[-1, 1]`.
@@ -55,7 +55,7 @@ then Gaussian noise (`observation_noise=0.025`) is added and the result is clipp
 `HistoryWrapper(env, horizon_obs, horizon_act)` stacks the last `horizon_obs` observations and `horizon_act` actions (oldest first),
 giving a `Box(-1.0, 1.0, (45 * horizon_obs + 2 * horizon_act,), float32)`, e.g. `(141,)` for `horizon_obs=3, horizon_act=3`.
 
-### Observation Space (vision)
+### Observation Space (RGB image)
 
 With `vision=True` (requires `render_mode="human"`) the observation is a `Dict`:
 
@@ -112,7 +112,7 @@ python scripts/collect_racing_lines.py forza alpine-2 --overwrite
 Track lists and hyperparameters live in `scripts/configs.py`.
 
 ```bash
-python scripts/train.py --algorithm td3 --seed 0 --device cuda   # ddpg, td3, sac, td7
+python scripts/train.py --algorithm td3 --seed 0 --device cuda   # ddpg, nstepddpg, td3, nsteptd3, sac, nstepsac, td7
 ./scripts/run.sh --device cuda                                   # the README experiment: DDPG and TD3, seeds 0-2
 ```
 

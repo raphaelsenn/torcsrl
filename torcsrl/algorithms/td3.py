@@ -68,10 +68,10 @@ class TD3(OffPolicyAlgorithm):
         self.noise_tgt_net = noise_target_network * self.action_scale_torch
         self.noise_tgt_clip = noise_target_clip * self.action_scale_torch
 
-        self.actor = ActorMLP(self.obs_dim, self.action_space).to(self.device)
+        self.actor = ActorMLP(self.obs_dim, self.action_space, **ac_kwargs).to(self.device)
         self.actor_tgt = copy.deepcopy(self.actor)
 
-        self.critic = CriticMLP(self.obs_dim, self.action_dim).to(self.device)
+        self.critic = CriticMLP(self.obs_dim, self.action_dim, **ac_kwargs).to(self.device)
         self.critic_tgt = copy.deepcopy(self.critic)
 
         self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), self.lr_actor)
@@ -135,7 +135,7 @@ class TD3(OffPolicyAlgorithm):
                     p.requires_grad = False 
                 
                 action_act = self.actor.act(obs)
-                q1 = self.critic.q1(obs, action_act).view(-1)
+                q1 = self.critic.Q1(obs, action_act).view(-1)
                 loss_actor = torch.mean(-q1)
 
                 self.optimizer_actor.zero_grad()

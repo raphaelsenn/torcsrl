@@ -203,6 +203,7 @@ class TorcsEnv(gym.Env):
             "speedX": sensors["speedX"],
             "lastLapTime": sensors["lastLapTime"],
             "distFromStart": sensors["distFromStart"],
+            "trackPos": sensors["trackPos"],
             "globalX": sensors["x"],
             "globalY": sensors["y"],
             "action_tita": _expert_action(sensors),

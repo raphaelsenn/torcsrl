@@ -17,18 +17,40 @@ from configs import TRAIN_TRACKS, VAL_TRACKS
 from gym_torcs import TorcsEnv, TrackSpec
 from gym_torcs.constants import RACING_LINE_DIR
 
+# |trackPos| beyond which the car counts as off the track for recording.
+OFF_TRACK_LIMIT = 1.2
 
-def record_laps(env: TorcsEnv, laps: int) -> list[tuple[float, float, float]]:
-    """Drive with tita until ``laps`` laps are completed, restarting after failures."""
-    rows, completed = [], 0
+
+def record_laps(env: TorcsEnv, laps: int, max_restarts: int | None = 5) -> list[tuple[float, float, float]]:
+    """Drive with tita until ``laps`` laps are completed, restarting after failures.
+
+    Raises ``RuntimeError`` once tita failed more than ``max_restarts`` times.
+    """
+    rows, completed, restarts = [], 0, 0
     _, info = env.reset(seed=0)
     last_lap_time = 0.0
 
     while completed < laps:
-        _, _, terminated, truncated, info = env.step(info["action_tita"])
+        _, _, _, truncated, info = env.step(info["action_tita"])
 
-        if info.get("torcs_timeout") or terminated or truncated:
-            print("  tita crashed or TORCS timed out, restarting")
+        # The env terminates as soon as a wheel touches the edge (|trackPos| > 1),
+        # tita brushes it on some tracks, so only restart on real failures.
+        if info.get("torcs_timeout"):
+            reason = "TORCS timed out"
+        elif info["crashed"]:
+            reason = "tita crashed"
+        elif abs(info["trackPos"]) > OFF_TRACK_LIMIT:
+            reason = f"tita left the track (trackPos {info['trackPos']:.2f})"
+        elif truncated:
+            reason = "episode truncated"
+        else:
+            reason = None
+
+        if reason is not None:
+            restarts += 1
+            if max_restarts is not None and restarts > max_restarts:
+                raise RuntimeError(f"{reason}; gave up after {max_restarts} restarts, {completed}/{laps} laps")
+            print(f"  {reason} at distFromStart {info.get('distFromStart', float('nan')):.0f}, restarting")
             _, info = env.reset()
             last_lap_time = 0.0
             continue
@@ -65,6 +87,9 @@ def main() -> None:
                        observation_noise=0.0, max_steps=10**9, truncate_on_lap=False)
         try:
             rows = record_laps(env, args.laps)
+        except RuntimeError as e:
+            print(f"{track.name}: {e}, skipping")
+            continue
         finally:
             env.close()
 
