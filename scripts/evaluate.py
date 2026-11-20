@@ -1,4 +1,5 @@
-"""Watch a trained agent (or the tita expert) drive in the TORCS window.
+"""
+Watch a trained RL agent (or the tita expert bot) drivew.
 
 Examples:
     python scripts/evaluate.py checkpoints/td3/<run>/actor-td3-100000.pt
@@ -72,7 +73,7 @@ def main() -> None:
 
     for name in args.tracks:
         for episode in range(args.episodes):
-            print(run_episode(env, agent, TrackSpec(name), args.seed + episode, args.laps))
+            print(run_episode(env, agent(name), args.seed + episode, args.laps))
     env.close()
 
 

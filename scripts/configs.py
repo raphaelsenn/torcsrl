@@ -1,4 +1,4 @@
-"""Shared settings of the experiment in the README: tracks, env and hyperparameters."""
+"""Shared settings of the experiment in the README."""
 
 import gymnasium as gym
 
@@ -14,7 +14,7 @@ TRAIN_TRACKS = [TrackSpec(name) for name in [
 
 # Validation tracks ordered by difficulty
 VAL_TRACKS = [TrackSpec(name) for name in [
-    "g-track-2", "e-track-6", "ruudskogen", "brondehach", "alpine-2", "e-track-1",
+    "michigan", "g-track-2", "e-track-6", "ruudskogen", "brondehach", "alpine-2",
 ]]
 
 # NOTE: TORCS runs at 50 Hz, therefore the agent acts 50 times a second

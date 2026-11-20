@@ -5,6 +5,8 @@ from pathlib import Path
 DEFAULT_TORCS_EXECUTABLE = "/usr/local/bin/torcs"
 RACING_LINE_DIR = Path(__file__).resolve().parent.parent / "data"
 
+# BUG: TORCS crashes on e-track-1...
+
 # How long TORCS waits for each action, in µs (the -t flag). The default of 10 ms is too short
 # when the agent trains between steps.
 CLIENT_TIMEOUT_US = 1_000_000
@@ -52,3 +54,19 @@ TRACK_SENSOR_ANGLES = (
     0.0,
     0.5, 1.0, 1.7, 2.5, 4.0, 7.0, 12.0, 19.0, 45.0,
 )
+
+# Track to category mapping
+TRACK_CATEGORIES = {
+    **dict.fromkeys([
+        "aalborg", "alpine-1", "alpine-2", "brondehach", "corkscrew", "e-track-1", "e-track-2",
+        "e-track-3", "e-track-4", "e-track-6", "eroad", "forza", "g-track-1", "g-track-2",
+        "g-track-3", "ole-road-1", "ruudskogen", "spring", "street-1", "wheel-1", "wheel-2",
+    ], "road"),
+    **dict.fromkeys([
+        "a-speedway", "b-speedway", "c-speedway", "d-speedway", "e-speedway", "e-track-5",
+        "f-speedway", "g-speedway", "michigan",
+    ], "oval"),
+    **dict.fromkeys([
+        "dirt-1", "dirt-2", "dirt-3", "dirt-4", "dirt-5", "dirt-6", "mixed-1", "mixed-2",
+    ], "dirt"),
+}

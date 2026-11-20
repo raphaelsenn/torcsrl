@@ -19,7 +19,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from gym_torcs.constants import CLIENT_TIMEOUT_US, DEFAULT_TORCS_EXECUTABLE, SCR_FIRST_PORT, SCR_NUM_SLOTS
+from gym_torcs.constants import (
+    CLIENT_TIMEOUT_US,
+    DEFAULT_TORCS_EXECUTABLE,
+    SCR_FIRST_PORT,
+    SCR_NUM_SLOTS,
+    TRACK_CATEGORIES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +115,13 @@ RACE_TEMPLATE = """\
 
 @dataclass(frozen=True, slots=True)
 class TrackSpec:
+    """A TORCS track. Without a category it is looked up in TRACK_CATEGORIES."""
     name: str
-    category: str = "road"
+    category: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.category is None:
+            object.__setattr__(self, "category", TRACK_CATEGORIES.get(self.name, "road"))
 
 
 class TorcsServer:
