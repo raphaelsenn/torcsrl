@@ -11,7 +11,7 @@ TRACKS = [TrackSpec("alpine-1"), TrackSpec("forza"), TrackSpec("aalborg")]
 MLP = {"ac_kwargs": {"h1_dim": 16, "h2_dim": 16}}
 ALGORITHMS = [
     (DDPG, MLP), (TD3, MLP), (NStepDDPG, {**MLP, "n_steps": 3}), (NStepTD3, {**MLP, "n_steps": 3}),
-    (SAC, {"ac_kwargs": {"hidden_dim": 16}}), (NStepSAC, {"ac_kwargs": {"hidden_dim": 16}, "n_steps": 3}),
+    (SAC, {"ac_kwargs": {"h1_dim": 16, "h2_dim": 16}}), (NStepSAC, {"ac_kwargs": {"h1_dim": 16, "h2_dim": 16}, "n_steps": 3}),
     (TD7, {"ac_kwargs": {"hidden_dim": 16, "zs_dim": 16}}),
 ]
 
@@ -90,7 +90,7 @@ def test_random_warmup_samples_the_action_space_on_every_track(algorithm_cls, kw
 
 def test_unknown_warmup_is_rejected() -> None:
     with pytest.raises(ValueError):
-        make(SAC, {"ac_kwargs": {"hidden_dim": 16}}, warmup="tita")
+        make(SAC, {"ac_kwargs": {"h1_dim": 16, "h2_dim": 16}}, warmup="tita")
 
 
 class LoggingEnv(FakeEnv):

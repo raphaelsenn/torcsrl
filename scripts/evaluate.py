@@ -26,6 +26,9 @@ def load_agent(env, checkpoint: Path, device: str):
 
     agent = cls(env, env, device=device, **{**config, "buffer_size": config["batch_size"], "verbose": False})
     agent.actor.load_state_dict(torch.load(checkpoint, map_location=device))
+    if hasattr(agent, "encoder_fixed"):    # TD7: the actor also needs the encoder saved next to it
+        encoder = checkpoint.with_name(checkpoint.name.replace("actor-", "encoder-", 1))
+        agent.encoder_fixed.load_state_dict(torch.load(encoder, map_location=device))
     agent.actor.eval()
     return agent
 

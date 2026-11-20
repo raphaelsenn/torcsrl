@@ -93,7 +93,7 @@ class NStepTD3(OffPolicyAlgorithm):
         self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), self.lr_critic)
 
     def act(self, obs: torch.Tensor, deterministic: bool = True) -> torch.Tensor:
-        action = self.actor(obs)
+        action = self.actor.act(obs)
 
         if deterministic is False:
             noise = self.exploration_noise * torch.randn_like(action, generator=self.torch_rng) 
@@ -121,7 +121,7 @@ class NStepTD3(OffPolicyAlgorithm):
                 # Target policy smoothing
                 noise = self.noise_tgt_net * torch.randn_like(action, generator=self.torch_rng) 
                 noise_clip = noise.clamp(-self.noise_tgt_clip, self.noise_tgt_clip)
-                action_next = self.actor_tgt(obs_next) + noise_clip                 # Target network
+                action_next = self.actor_tgt.act(obs_next) + noise_clip                 # Target network
                 action_next = action_next.clamp(self.action_low_torch, self.action_high_torch)
 
                 # Clipped double Q-learning
@@ -148,7 +148,7 @@ class NStepTD3(OffPolicyAlgorithm):
                 for p in self.critic.parameters():
                     p.requires_grad = False 
                 
-                action_act = self.actor(obs)
+                action_act = self.actor.act(obs)
                 q1 = self.critic.Q1(obs, action_act).view(-1)
                 loss_actor = torch.mean(-q1)
 

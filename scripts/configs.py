@@ -47,7 +47,7 @@ TD_STYLE = {"exploration_noise": 0.1, "policy_delay": 2}
 ONE_STEP = {"tau_polyak": 0.005}
 N_STEP = {"n_steps": 3, "tau_polyak": 0.005}
 MLP = {"ac_kwargs": {"h1_dim": 256, "h2_dim": 256}}
-SAC_MLP = {"lr_alpha": 3e-4, "ac_kwargs": {"hidden_dim": 256}}
+SAC_MLP = {"lr_alpha": 3e-4, "ac_kwargs": {"h1_dim": 256, "h2_dim": 256}}
 
 ALGORITHMS = {
     "ddpg": (DDPG, {**COMMON, **TD_STYLE, **ONE_STEP, **MLP}),

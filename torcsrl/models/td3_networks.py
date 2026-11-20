@@ -75,13 +75,6 @@ class CriticMLP(Critic):
         cat = torch.cat([obs, action], dim=-1) 
         return self.q1(cat), self.q2(cat)
 
-    def q(self, obs: torch.Tensor, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.forward(obs, action)
-
     def Q1(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         cat = torch.cat([obs, action], dim=-1) 
         return self.q1(cat)
-    
-    def Q2(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-        cat = torch.cat([obs, action], dim=-1) 
-        return self.q2(cat)

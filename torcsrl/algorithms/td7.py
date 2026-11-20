@@ -4,7 +4,6 @@ import copy
 import torch
 import torch.nn.functional as F
 import gymnasium as gym
-import numpy as np
 
 from torcsrl.buffers.lap_replay_buffer import LapReplayBuffer
 from torcsrl.algorithms.base import OffPolicyAlgorithm
@@ -116,6 +115,16 @@ class TD7(OffPolicyAlgorithm):
             action = action.clamp(self.action_low_torch, self.action_high_torch)
 
         return action
+
+    def q_value(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        zs = self.encoder_fixed.zs(obs)
+        zsa = self.encoder_fixed.zsa(zs, action)
+        q1, q2 = self.critic(obs, action, zsa, zs)
+        return torch.min(q1, q2).view(-1)
+
+    def checkpoint_networks(self) -> dict[str, torch.nn.Module]:
+        # act() needs the fixed encoder's zs, so it must be saved along with the actor.
+        return {**super().checkpoint_networks(), "encoder": self.encoder_fixed}
 
     @torch.no_grad()
     def update_target_networks(self) -> None:

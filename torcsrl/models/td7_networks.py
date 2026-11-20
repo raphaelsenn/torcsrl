@@ -20,7 +20,7 @@ def AvgL1Norm(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
 
 
 class EncoderMLP(nn.Module):
-	def __init__(
+    def __init__(
         self, 
         obs_dim: int, 
         action_dim: int, 
@@ -28,29 +28,29 @@ class EncoderMLP(nn.Module):
         hidden_dim: int = 256,
         **kw_args
     ) -> None:
-		super().__init__()
+        super().__init__()
 
-		# State encoder
-		self.zs1 = nn.Linear(obs_dim, hidden_dim)
-		self.zs2 = nn.Linear(hidden_dim, hidden_dim)
-		self.zs3 = nn.Linear(hidden_dim, zs_dim)
-		
-		# State-action encoder
-		self.zsa1 = nn.Linear(zs_dim + action_dim, hidden_dim)
-		self.zsa2 = nn.Linear(hidden_dim, hidden_dim)
-		self.zsa3 = nn.Linear(hidden_dim, zs_dim)
-	
-	def zs(self, obs: torch.Tensor) -> torch.Tensor:
-		zs = F.elu(self.zs1(obs))
-		zs = F.elu(self.zs2(zs))
-		zs = AvgL1Norm(self.zs3(zs))
-		return zs
+        # State encoder
+        self.zs1 = nn.Linear(obs_dim, hidden_dim)
+        self.zs2 = nn.Linear(hidden_dim, hidden_dim)
+        self.zs3 = nn.Linear(hidden_dim, zs_dim)
+        
+        # State-action encoder
+        self.zsa1 = nn.Linear(zs_dim + action_dim, hidden_dim)
+        self.zsa2 = nn.Linear(hidden_dim, hidden_dim)
+        self.zsa3 = nn.Linear(hidden_dim, zs_dim)
+    
+    def zs(self, obs: torch.Tensor) -> torch.Tensor:
+        zs = F.elu(self.zs1(obs))
+        zs = F.elu(self.zs2(zs))
+        zs = AvgL1Norm(self.zs3(zs))
+        return zs
 
-	def zsa(self, zs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-		zsa = F.elu(self.zsa1(torch.cat([zs, action], 1)))
-		zsa = F.elu(self.zsa2(zsa))
-		zsa = self.zsa3(zsa)
-		return zsa
+    def zsa(self, zs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        zsa = F.elu(self.zsa1(torch.cat([zs, action], 1)))
+        zsa = F.elu(self.zsa2(zsa))
+        zsa = self.zsa3(zsa)
+        return zsa
 
 
 class ActorMLP(Actor):
@@ -108,7 +108,7 @@ class CriticMLP(Critic):
         action: torch.Tensor,
         zsa: torch.Tensor, 
         zs: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         sa = torch.cat([obs, action], 1)
         embeddings = torch.cat([zsa, zs], 1)
 
@@ -124,38 +124,3 @@ class CriticMLP(Critic):
         q2 = F.elu(self.q5(q2))
         q2 = self.q6(q2)
         return q1, q2
-
-    def Q1(
-        self, 
-        obs: torch.Tensor, 
-        action: torch.Tensor,
-        zsa: torch.Tensor, 
-        zs: torch.Tensor
-    ) -> torch.Tensor:
-        sa = torch.cat([obs, action], 1)
-        embeddings = torch.cat([zsa, zs], 1)
-
-        q1 = AvgL1Norm(self.q01(sa))
-        q1 = torch.cat([q1, embeddings], 1)
-        q1 = F.elu(self.q1(q1))
-        q1 = F.elu(self.q2(q1))
-        q1 = self.q3(q1)
-        
-        return q1
-
-    def Q2(
-        self, 
-        obs: torch.Tensor, 
-        action: torch.Tensor,
-        zsa: torch.Tensor, 
-        zs: torch.Tensor
-    ) -> torch.Tensor:
-        sa = torch.cat([obs, action], 1)
-        embeddings = torch.cat([zsa, zs], 1)
-
-        q2 = AvgL1Norm(self.q02(sa))
-        q2 = torch.cat([q2, embeddings], 1)
-        q2 = F.elu(self.q4(q2))
-        q2 = F.elu(self.q5(q2))
-        q2 = self.q6(q2)
-        return q2

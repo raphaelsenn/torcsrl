@@ -133,7 +133,7 @@ class NStepDDPG(OffPolicyAlgorithm):
                 for p in self.critic.parameters():
                     p.requires_grad = False 
                 
-                action_act = self.act(obs, deterministic=True)
+                action_act = self.actor.act(obs)
                 q = self.critic(obs, action_act).view(-1)
                 loss_actor = torch.mean(-q)
 

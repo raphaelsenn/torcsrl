@@ -112,6 +112,13 @@ class RLAlgorithm(ABC):
         action = action.flatten().cpu().numpy()                                 # [action_dim]
         return action
 
+    def q_value(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """Critic estimate Q(s, a), the min over twin critics if there are two."""
+        q = self.critic(obs, action)
+        if isinstance(q, tuple):
+            q = torch.min(*q)
+        return q.view(-1)
+
     @torch.no_grad()
     def evaluate(self) -> None:
         """Drive one deterministic episode on every validation track and record the stats."""
@@ -124,20 +131,36 @@ class RLAlgorithm(ABC):
             track_key = f"{track['category']}/{track['name']}" if track else "eval"
 
             done = False
-            n_steps = 0
+            q_sum = 0.0
             speed_sum = 0.0
-            episode_return = 0.0
+            rewards = []
 
             while not done:
-                action = self.act_numpy(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = self.val_env.step(action)
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                action_t = self.act(obs_t, deterministic=True)
+                q_sum += float(self.q_value(obs_t, action_t))
+
+                obs, reward, terminated, truncated, info = self.val_env.step(action_t.flatten().cpu().numpy())
                 done = terminated or truncated
 
-                n_steps += 1
-                episode_return += reward
+                rewards.append(float(reward))
                 speed_sum += float(info.get("speed", 0.0))
 
-            episode = EpisodeStats.from_episode(self.global_step_counter, episode_return, speed_sum / max(n_steps, 1), info)
+            # Discounted return-to-go G_t of every visited state, the target that Q(s_t, a_t) should match
+            g, g_sum = 0.0, 0.0
+            for r in reversed(rewards):
+                g = r + self.gamma * g
+                g_sum += g
+
+            n_steps = max(len(rewards), 1)
+            episode = EpisodeStats.from_episode(
+                self.global_step_counter,
+                episode_return=sum(rewards),
+                average_speed=speed_sum / n_steps,
+                average_q=q_sum / n_steps,
+                average_discounted_return=g_sum / n_steps,
+                info=info,
+            )
             self.eval_stats.setdefault(track_key, EvaluationStats()).add(episode)
 
     def set_seeds(self) -> None:
@@ -196,19 +219,24 @@ class RLAlgorithm(ABC):
                 f"Distance: {e.distance_raced:>8.1f} m  "
                 f"Speed: {e.average_speed:>6.1f} km/h  "
                 f"Damage: {e.damage:>7.1f}  "
+                f"Q: {e.average_q:>8.2f}  "
                 f"Lap time: {e.lap_time:>7.2f} s  "
                 f"End: {e.end_reason}"
             )
             print(report)
     
+    def checkpoint_networks(self) -> dict[str, torch.nn.Module]:
+        """Networks written to disk by save(), saved as <name>-<algorithm>-<step>.pt."""
+        return {"actor": self.actor, "critic": self.critic}
+
     def save(self) -> None:
         algo_name = self.__class__.__name__.lower()
         run_name = f"{algo_name}-lr_pi{self.lr_actor}-lr_q{self.lr_critic}-seed{self.seed}"
         save_dir = os.path.join("checkpoints", algo_name, run_name)
         os.makedirs(save_dir, exist_ok=True)
 
-        torch.save(self.actor.state_dict(), os.path.join(save_dir, f"actor-{algo_name}-{self.global_step_counter}.pt"))
-        torch.save(self.critic.state_dict(), os.path.join(save_dir, f"critic-{algo_name}-{self.global_step_counter}.pt"))
+        for name, net in self.checkpoint_networks().items():
+            torch.save(net.state_dict(), os.path.join(save_dir, f"{name}-{algo_name}-{self.global_step_counter}.pt"))
         
         for track_key, stats in self.eval_stats.items():
             safe_track_key = track_key.replace("/", "_")
