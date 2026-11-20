@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import gymnasium as gym
 import numpy as np
 
-from torcsrl.buffers.n_step_replay_buffer import NStepReplayBuffer
+from torcsrl.buffers.n_step.replay_buffer import NStepReplayBuffer
 from torcsrl.algorithms.base import OffPolicyAlgorithm
 from torcsrl.models.td3_networks import ActorMLP, CriticMLP
 

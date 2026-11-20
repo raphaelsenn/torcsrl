@@ -9,7 +9,7 @@ from torch.distributions import Normal
 import gymnasium as gym
 import numpy as np
 
-from torcsrl.buffers.n_step_replay_buffer import NStepReplayBuffer
+from torcsrl.buffers.n_step.replay_buffer import NStepReplayBuffer
 from torcsrl.algorithms.base import OffPolicyAlgorithm
 from torcsrl.models.sac_networks import ActorMLP, CriticMLP
 
