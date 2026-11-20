@@ -15,8 +15,6 @@ class EpisodeStats:
     distance_raced: float       # m
     average_speed: float        # km/h
     damage: float
-    average_q: float                    # mean critic estimate Q(s_t, a_t) over the episode
-    average_discounted_return: float    # mean true discounted return-to-go G_t, compare with average_q
     laps_completed: int
     lap_time: float             # s, NaN if no lap was finished
     end_reason: str | None
@@ -27,11 +25,9 @@ class EpisodeStats:
         timesteps: int,
         episode_return: float,
         average_speed: float,
-        average_q: float,
-        average_discounted_return: float,
         info: dict[str, Any],
     ) -> "EpisodeStats":
-        """Build from the per-episode averages and the last step's info."""
+        """Build from the episode return, the average speed and the last step's info."""
         episode_steps = int(info.get("episode_steps", 0))
         laps_completed = int(info.get("laps_completed", 0))
         return cls(
@@ -41,8 +37,6 @@ class EpisodeStats:
             distance_raced=float(info.get("distance_raced", 0.0)),
             average_speed=float(average_speed),
             damage=float(info.get("damage", 0.0)),
-            average_q=float(average_q),
-            average_discounted_return=float(average_discounted_return),
             laps_completed=laps_completed,
             lap_time=float(info["lap_time"]) if laps_completed > 0 else math.nan,
             end_reason=info.get("end_reason"),

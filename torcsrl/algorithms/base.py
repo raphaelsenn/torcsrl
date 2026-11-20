@@ -112,13 +112,6 @@ class RLAlgorithm(ABC):
         action = action.flatten().cpu().numpy()                                 # [action_dim]
         return action
 
-    def q_value(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
-        """Critic estimate Q(s, a), the min over twin critics if there are two."""
-        q = self.critic(obs, action)
-        if isinstance(q, tuple):
-            q = torch.min(*q)
-        return q.view(-1)
-
     @torch.no_grad()
     def evaluate(self) -> None:
         """Drive one deterministic episode on every validation track and record the stats."""
@@ -131,36 +124,20 @@ class RLAlgorithm(ABC):
             track_key = f"{track['category']}/{track['name']}" if track else "eval"
 
             done = False
-            q_sum = 0.0
+            n_steps = 0
             speed_sum = 0.0
-            rewards = []
+            episode_return = 0.0
 
             while not done:
-                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-                action_t = self.act(obs_t, deterministic=True)
-                q_sum += float(self.q_value(obs_t, action_t))
-
-                obs, reward, terminated, truncated, info = self.val_env.step(action_t.flatten().cpu().numpy())
+                action = self.act_numpy(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = self.val_env.step(action)
                 done = terminated or truncated
 
-                rewards.append(float(reward))
+                n_steps += 1
+                episode_return += reward
                 speed_sum += float(info.get("speed", 0.0))
 
-            # Discounted return-to-go G_t of every visited state, the target that Q(s_t, a_t) should match
-            g, g_sum = 0.0, 0.0
-            for r in reversed(rewards):
-                g = r + self.gamma * g
-                g_sum += g
-
-            n_steps = max(len(rewards), 1)
-            episode = EpisodeStats.from_episode(
-                self.global_step_counter,
-                episode_return=sum(rewards),
-                average_speed=speed_sum / n_steps,
-                average_q=q_sum / n_steps,
-                average_discounted_return=g_sum / n_steps,
-                info=info,
-            )
+            episode = EpisodeStats.from_episode(self.global_step_counter, episode_return, speed_sum / max(n_steps, 1), info)
             self.eval_stats.setdefault(track_key, EvaluationStats()).add(episode)
 
     def set_seeds(self) -> None:
@@ -219,7 +196,6 @@ class RLAlgorithm(ABC):
                 f"Distance: {e.distance_raced:>8.1f} m  "
                 f"Speed: {e.average_speed:>6.1f} km/h  "
                 f"Damage: {e.damage:>7.1f}  "
-                f"Q: {e.average_q:>8.2f}  "
                 f"Lap time: {e.lap_time:>7.2f} s  "
                 f"End: {e.end_reason}"
             )
