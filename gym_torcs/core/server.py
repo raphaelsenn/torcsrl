@@ -2,6 +2,8 @@
 
 Each server gets its own temporary HOME with a copy of ``~/.torcs``, so the
 race file and screen settings written here never touch the user's config.
+Only graph.xml, where TORCS saves the camera view, is copied back on close
+in GUI mode.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from gym_torcs.constants import DEFAULT_TORCS_EXECUTABLE, SCR_FIRST_PORT, SCR_NUM_SLOTS
+from gym_torcs.constants import CLIENT_TIMEOUT_US, DEFAULT_TORCS_EXECUTABLE, SCR_FIRST_PORT, SCR_NUM_SLOTS
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,7 @@ class TorcsServer:
         gui: bool = False,
         window_size: tuple[int, int] | None = None,
         startup_sleep: float = 1.0,
+        client_timeout_us: int = CLIENT_TIMEOUT_US,
         verbose: bool = False,
     ) -> None:
         driver_idx = port - SCR_FIRST_PORT
@@ -141,6 +144,7 @@ class TorcsServer:
         self.executable = executable
         self.gui = gui
         self.startup_sleep = startup_sleep
+        self.client_timeout_us = client_timeout_us
         self.verbose = verbose
         self.process: subprocess.Popen[bytes] | None = None
 
@@ -166,7 +170,7 @@ class TorcsServer:
             )
         )
 
-        command = [self.executable, "-nofuel", "-nodamage", "-nolaptime"]
+        command = [self.executable, "-nofuel", "-nodamage", "-nolaptime", "-t", str(self.client_timeout_us)]
         if not self.gui:
             command += ["-r", str(race_file)]
 
@@ -201,7 +205,16 @@ class TorcsServer:
 
     def close(self) -> None:
         self.stop()
+        if self.gui:
+            self._save_graphics_config()
         shutil.rmtree(self.home, ignore_errors=True)
+
+    def _save_graphics_config(self) -> None:
+        """Copy graph.xml back to ~/.torcs, so the camera picked with F2..F11 is kept."""
+        graph_file = self.config_dir / "graph.xml"
+        user_config = Path.home() / ".torcs" / "config"
+        if graph_file.exists() and user_config.is_dir():
+            shutil.copy2(graph_file, user_config / "graph.xml")
 
     def _set_window_size(self, width: int, height: int) -> None:
         screen_file = self.config_dir / "screen.xml"

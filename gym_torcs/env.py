@@ -3,67 +3,66 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from gym_torcs.client import Action, Sensors, TorcsClient
+from gym_torcs import rules
 from gym_torcs.constants import (
     DEFAULT_TORCS_EXECUTABLE,
     FAILURE_REWARD,
     LOOKAHEAD_DISTANCES,
-    MAX_ACCEL,
-    MAX_CURVATURE,
-    MAX_RPM,
-    MAX_SPEED,
-    MAX_TRACK,
-    MAX_WHEEL_SPIN_VEL,
-    MIN_SPEED,
     RACING_LINE_DIR,
-    STALL_GRACE_STEPS,
+    STALL_REWARD,
 )
+from gym_torcs.core.client import Action, Sensors, TorcsClient
+from gym_torcs.core.server import TorcsServer, TrackSpec
+from gym_torcs.core.vision import FRAME_HEIGHT, FRAME_WIDTH, FrameBuffer, resize
 from gym_torcs.curvature import RacingLineCurvatureMap
-from gym_torcs.server import TorcsServer, TrackSpec
-from gym_torcs.vision import FRAME_HEIGHT, FRAME_WIDTH, FrameBuffer, resize
+from gym_torcs.observation import STATE_SIZE, state_vector
 
 logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT = 120.0
 FIRST_SENSORS_TIMEOUT = 60.0
 STEP_TIMEOUT = 10.0
-MAX_STEPS_WITHOUT_FRAME = 500
-STATE_SIZE = 45
+MAX_WAIT_STEPS = 1_000          # for the first camera frame and the start countdown
+MAX_APPROACH_STEPS = 50_000     # tita driving to a random start
+IDLE = np.zeros(2, dtype=np.float32)
 
 
 class TorcsEnv(gym.Env):
-    """TORCS race on a single track, driven through the SCR server robot.
+    """A TORCS race on one track, driven through the SCR server.
 
-    Actions are ``[steer, throttle]`` in ``[-1, 1]``. Negative throttle brakes,
-    and gears are shifted automatically.
+    The action is [steer, throttle]. Negative throttle brakes. Gears shift automatically.
+    See the README for observations, reward and info.
 
-    The state is a vector of 45 values, each scaled to ``[-1, 1]``:
-
-    ====  ===================================================================
-    0-2   speed along the car's x, y, z axes
-    3-5   acceleration along the car's x, y, z axes
-    6     engine rpm
-    7     angle between the car and the track axis
-    8     lateral position on the track, -1 is the right edge, 1 the left
-    9-27  track edge distances along ``TRACK_SENSOR_ANGLES``
-    28-31 wheel spin velocities
-    32    offset from the racing line of the ``tita`` robot
-    33-44 racing line curvature 0, 25, ..., 275 m ahead
-    ====  ===================================================================
-
-    With ``vision=True`` the observation is a dict with the state under
-    ``"state"`` and an RGB camera image of ``image_shape`` under ``"image"``.
-    Vision needs the TORCS window, so it requires ``render_mode="human"``.
-
-    The reward is the forward speed, discounted by the distance to the racing
-    line. Leaving the track, damage, driving backwards or standing still end
-    the episode with a reward of ``FAILURE_REWARD``.
+    Args:
+        render_mode: None runs TORCS headless. "human" opens the TORCS window.
+        port: UDP port of the SCR driver, 3001 to 3010. Each env needs its own port.
+        host: Address of the machine running TORCS.
+        track: Track to race on. reset can switch it with options={"track": ...}.
+        laps: Laps in the TORCS race. TORCS ends the race after that many, and the next
+            step is truncated with end_reason "race_over".
+        vision: Also return a camera image. Needs render_mode="human".
+        image_shape: (height, width) of the camera image.
+        observation_noise: Std of the Gaussian noise added to the state.
+        max_steps: Truncate the episode after this many steps (20 ms each).
+        truncate_on_lap: Truncate the episode when a lap is finished.
+        random_start: Chance that an episode starts somewhere on the lap instead of
+            on the grid. tita drives the car there first.
+        failure_reward: Reward of the step in which the car crashes, leaves the track or
+            turns backwards.
+        stall_reward: Reward of the step in which the car is declared stalled. Lower than
+            failure_reward so that stopping is never a way to avoid a crash (see constants.py).
+        executable: Path to the TORCS start script.
+        racing_line_dir: Folder with one racing line CSV per track, used for the
+            curvature features and random starts. Without a CSV, tita's own curvature
+            estimate is used and random starts are off.
+        startup_sleep: Seconds to wait after starting TORCS before connecting.
+        verbose: Show the TORCS output.
     """
 
     metadata = {"render_modes": ["human"], "render_fps": 50}
@@ -78,9 +77,12 @@ class TorcsEnv(gym.Env):
         laps: int = 20,
         vision: bool = False,
         image_shape: tuple[int, int] = (64, 64),
-        observation_noise: float = 0.025,
+        observation_noise: float = 0.01,
         max_steps: int = 25_000,
         truncate_on_lap: bool = True,
+        random_start: float = 0.0,
+        failure_reward: float = FAILURE_REWARD,
+        stall_reward: float = STALL_REWARD,
         executable: str = DEFAULT_TORCS_EXECUTABLE,
         racing_line_dir: str | Path = RACING_LINE_DIR,
         startup_sleep: float = 1.0,
@@ -90,6 +92,8 @@ class TorcsEnv(gym.Env):
             raise ValueError(f"render_mode must be None or 'human', got {render_mode!r}.")
         if vision and render_mode != "human":
             raise ValueError("vision=True needs render_mode='human', frames come from the TORCS window.")
+        if not 0.0 <= random_start <= 1.0:
+            raise ValueError(f"random_start must be a probability, got {random_start}.")
 
         self.render_mode = render_mode
         self.host = host
@@ -100,6 +104,9 @@ class TorcsEnv(gym.Env):
         self.observation_noise = observation_noise
         self.max_steps = max_steps
         self.truncate_on_lap = truncate_on_lap
+        self.random_start = random_start
+        self.failure_reward = failure_reward
+        self.stall_reward = stall_reward
         self.racing_line_dir = Path(racing_line_dir)
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
@@ -126,34 +133,44 @@ class TorcsEnv(gym.Env):
         self._sensors: Sensors = {}
         self._last_obs: Any = None
         self._step_count = 0
+        self._laps_completed = 0
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
-        """Relaunch TORCS. Pass ``options={"track": TrackSpec(...)}`` to change the track."""
+        """Restart TORCS. Pass options={"track": ...} to change the track."""
         super().reset(seed=seed)
         if options and "track" in options:
             self.track = options["track"]
+        self._racing_line = self._load_racing_line(self.track.name)
 
         self._disconnect()
         self.server.start(self.track, self.laps)
         if self.frames is not None:
             self.frames.start_capture()
-
         self.client = TorcsClient(self.host, self.port)
         self.client.connect(CONNECT_TIMEOUT)
         sensors = self.client.receive(FIRST_SENSORS_TIMEOUT, keepalive=Action())
+
         if self.frames is not None:
-            sensors = self._wait_for_first_frame()
+            sensors = self._drive_until(sensors, lambda s: self.frames.has_frame, MAX_WAIT_STEPS,
+                                        error="TORCS sent no camera frame. Is the race running in a visible window?")
+        # Wait out the start countdown.
+        sensors = self._drive_until(sensors, lambda s: s["curLapTime"] >= 0.0, MAX_WAIT_STEPS,
+                                    error="The race did not start: curLapTime stayed negative.")
+
+        start_on_lap = self._racing_line is not None and self.np_random.random() < self.random_start
+        if start_on_lap:
+            target = self.np_random.uniform(0.0, self._racing_line.track_length)
+            sensors = self._drive_expert_to(sensors, target)
 
         self._sensors = sensors
         self._step_count = 0
-        self._racing_line = self._load_racing_line(self.track.name)
+        self._laps_completed = 0
         self._last_obs = self._observe(sensors)
-
         info = {
             "track": asdict(self.track),
             "track_length": self._racing_line.track_length if self._racing_line else None,
-            "distFromStart": sensors["distFromStart"],
-            "action_tita": _expert_action(sensors),
+            "random_start": start_on_lap,
+            **self._info(sensors),
         }
         return self._last_obs, info
 
@@ -161,53 +178,38 @@ class TorcsEnv(gym.Env):
         if self.client is None:
             raise RuntimeError("Call reset() before step().")
 
-        steer, throttle = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+        action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
         prev = self._sensors
-        self.client.send(Action(
-            steer=float(steer),
-            accel=max(float(throttle), 0.0),
-            brake=max(-float(throttle), 0.0),
-            gear=_shift_gear(int(prev["gear"]), prev["rpm"]),
-        ))
-
+        self._send(action, prev)
         try:
             sensors = self.client.receive(STEP_TIMEOUT)
-        except TimeoutError:
-            logger.warning("TORCS on port %d stopped sending data at step %d.", self.port, self._step_count)
+        except (TimeoutError, ConnectionError) as error:
+            # ConnectionError: TORCS ended the race, e.g. after its last lap (see `laps`).
+            end_reason = "torcs_timeout" if isinstance(error, TimeoutError) else "race_over"
+            logger.warning("TORCS on port %d stopped at step %d: %s", self.port, self._step_count, end_reason)
             self._disconnect()
-            return self._last_obs, 0.0, False, True, {"torcs_timeout": True, "crashed": True}
-
-        damage_delta = sensors["damage"] - prev["damage"]
-        crashed = damage_delta > 0.0
-        off_track = abs(sensors["trackPos"]) > 1.0 or min(sensors["track"]) < 0.0
-        backwards = np.cos(sensors["angle"]) < 0.0
-        stalled = self._step_count > STALL_GRACE_STEPS and sensors["speedX"] < MIN_SPEED
-        lap_completed = sensors["lastLapTime"] > 0.0
+            # Return the last state we have.
+            return self._last_obs, 0.0, False, True, self._info(prev, end_reason=end_reason)
 
         self._sensors = sensors
         self._step_count += 1
+        lap_completed = rules.lap_completed(sensors, prev)
+        self._laps_completed += int(lap_completed)
 
-        terminated = crashed or off_track or backwards or stalled
-        truncated = (self.truncate_on_lap and lap_completed) or self._step_count >= self.max_steps
-        reward = FAILURE_REWARD if terminated else _progress_reward(sensors)
+        end_reason = rules.failure(sensors, prev, self._step_count)
+        terminated = end_reason is not None
+        if terminated:
+            reward = self.stall_reward if end_reason == "stalled" else self.failure_reward
+        else:
+            reward = rules.progress_reward(sensors)
+            if self.truncate_on_lap and lap_completed:
+                end_reason = "lap_completed"
+            elif self._step_count >= self.max_steps:
+                end_reason = "max_steps"
+        truncated = not terminated and end_reason is not None
+
         self._last_obs = self._observe(sensors)
-
-        info = {
-            "successfulLap": lap_completed,
-            "offTrack": off_track,
-            "crashed": crashed,
-            "damage": sensors["damage"],
-            "damage_delta": damage_delta,
-            "distRaced": sensors["distRaced"],
-            "timeAlive": sensors["curLapTime"],
-            "speedX": sensors["speedX"],
-            "lastLapTime": sensors["lastLapTime"],
-            "distFromStart": sensors["distFromStart"],
-            "trackPos": sensors["trackPos"],
-            "globalX": sensors["x"],
-            "globalY": sensors["y"],
-            "action_tita": _expert_action(sensors),
-        }
+        info = self._info(sensors, end_reason, lap_completed, sensors["damage"] - prev["damage"])
         return self._last_obs, reward, terminated, truncated, info
 
     def close(self) -> None:
@@ -216,21 +218,44 @@ class TorcsEnv(gym.Env):
         if self.frames is not None:
             self.frames.close()
 
+    # ------------------------------------------------------------------ driving
+
+    def _send(self, action: np.ndarray, prev: Sensors) -> None:
+        self.client.send(rules.command(float(action[0]), float(action[1]), prev))
+
+    def _drive_until(
+        self,
+        sensors: Sensors,
+        done: Callable[[Sensors], bool],
+        max_steps: int,
+        policy: Callable[[Sensors], np.ndarray] = lambda s: IDLE,
+        error: str | None = None,
+    ) -> Sensors:
+        """Drive with policy until done(sensors) is true.
+
+        Gives up after max_steps: raises if error is set, else returns the last sensors.
+        """
+        for _ in range(max_steps):
+            if done(sensors):
+                return sensors
+            self._send(policy(sensors), sensors)
+            sensors = self.client.receive(STEP_TIMEOUT)
+        if error is not None:
+            raise RuntimeError(error)
+        return sensors
+
+    def _drive_expert_to(self, sensors: Sensors, distance: float) -> Sensors:
+        """Let tita drive until the car has covered distance meters and is on the track."""
+        def arrived(s: Sensors) -> bool:
+            return s["distRaced"] >= distance and abs(s["trackPos"]) < 0.9
+        return self._drive_until(sensors, arrived, MAX_APPROACH_STEPS, policy=rules.expert_action)
+
     def _disconnect(self) -> None:
         if self.client is not None:
             self.client.close()
             self.client = None
 
-    def _wait_for_first_frame(self) -> Sensors:
-        """Idle at the start line until TORCS has written the first camera frame."""
-        assert self.client is not None and self.frames is not None
-        idle = Action()
-        for _ in range(MAX_STEPS_WITHOUT_FRAME):
-            self.client.send(idle)
-            sensors = self.client.receive(STEP_TIMEOUT)
-            if self.frames.has_frame:
-                return sensors
-        raise RuntimeError("TORCS sent no camera frame. Is the race running in a visible window?")
+    # ------------------------------------------------------------- observation
 
     def _observe(self, sensors: Sensors) -> np.ndarray | dict[str, np.ndarray]:
         state = self._state(sensors)
@@ -242,26 +267,36 @@ class TorcsEnv(gym.Env):
         if self._racing_line is not None:
             curvature = self._racing_line.lookahead(s["distFromStart"], LOOKAHEAD_DISTANCES)
         else:
-            # Curvature estimated by the tita robot inside TORCS.
-            curvature = np.array([s[f"curv{d}"] for d in LOOKAHEAD_DISTANCES])
-
-        racing_line_offset = np.clip((s["trackPos"] - _racing_line_position(s)) / 2.0, -1.0, 1.0)
-
-        state = np.concatenate([
-            np.array([s["speedX"], s["speedY"], s["speedZ"]]) / MAX_SPEED,
-            np.array([s["accelX"], s["accelY"], s["accelZ"]]) / MAX_ACCEL,
-            [s["rpm"] / MAX_RPM * 2.0 - 1.0],
-            [s["angle"] / np.pi],
-            [s["trackPos"]],
-            np.array(s["track"]) / MAX_TRACK * 2.0 - 1.0,
-            np.array(s["wheelSpinVel"]) / MAX_WHEEL_SPIN_VEL * 2.0 - 1.0,
-            [racing_line_offset],
-            curvature / MAX_CURVATURE,
-        ]).astype(np.float32)
-
+            curvature = np.array([s[f"curv{d}"] for d in LOOKAHEAD_DISTANCES])  # estimated by tita
+        state = state_vector(s, curvature)
         if self.observation_noise > 0.0:
             state += self.np_random.normal(0.0, self.observation_noise, size=state.shape).astype(np.float32)
         return np.clip(state, -1.0, 1.0)
+
+    def _info(
+        self,
+        s: Sensors,
+        end_reason: str | None = None,
+        lap_completed: bool = False,
+        damage_delta: float = 0.0,
+    ) -> dict[str, Any]:
+        return {
+            "end_reason": end_reason,
+            "lap_completed": lap_completed,
+            "laps_completed": self._laps_completed,
+            "lap_time": s["lastLapTime"],
+            "current_lap_time": s["curLapTime"],
+            "episode_steps": self._step_count,
+            "distance_raced": s["distRaced"],
+            "distance_from_start": s["distFromStart"],
+            "speed": s["speedX"],
+            "track_position": s["trackPos"],
+            "position_x": s["x"],
+            "position_y": s["y"],
+            "damage": s["damage"],
+            "damage_delta": damage_delta,
+            "expert_action": rules.expert_action(s),
+        }
 
     def _load_racing_line(self, track_name: str) -> RacingLineCurvatureMap | None:
         if track_name not in self._racing_lines:
@@ -272,28 +307,3 @@ class TorcsEnv(gym.Env):
                 logger.warning("No racing line at %s, using curvature from TORCS.", path)
                 self._racing_lines[track_name] = None
         return self._racing_lines[track_name]
-
-
-def _racing_line_position(s: Sensors) -> float:
-    # tita reports its line with the opposite sign convention to trackPos.
-    return -s["titaLineTrackPos"]
-
-
-def _progress_reward(s: Sensors) -> float:
-    distance_to_line = abs(s["trackPos"] - _racing_line_position(s)) / 2.0
-    return s["speedX"] / MAX_SPEED * (1.0 - distance_to_line)
-
-
-def _expert_action(s: Sensors) -> np.ndarray:
-    """The action the tita robot would take, in this env's action format."""
-    return np.array([s["titaSteer"], s["titaGas"] - s["titaBrake"]], dtype=np.float32)
-
-
-def _shift_gear(gear: int, rpm: float) -> int:
-    if gear < 1:
-        return 1
-    if rpm > 8000.0 and gear < 6:
-        return gear + 1
-    if rpm < 3500.0 and gear > 1:
-        return gear - 1
-    return gear

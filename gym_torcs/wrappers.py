@@ -6,7 +6,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from gym_torcs.server import TrackSpec
+from gym_torcs.core.server import TrackSpec
 
 
 class TimedTrackSelectionWrapper(gym.Wrapper):
@@ -62,9 +62,10 @@ class HistoryWrapper(gym.Wrapper):
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         obs, info = self.env.reset(seed=seed, options=options)
-        self._observations[:] = 0.0
+        # Fill the history with the first observation. Zeros would look like a parked car,
+        # which is wrong when the episode starts at speed.
+        self._observations[:] = obs
         self._actions[:] = 0.0
-        self._observations[-1] = obs
         return self._history(), info
 
     def step(self, action):
