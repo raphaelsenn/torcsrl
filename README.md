@@ -1,8 +1,6 @@
 # Deep Reinforcement Learning on TORCS
 
-There are several TORCS reinforcement learning projects, many of them are based on older codebases and use old versions of Keras or TensorFlow.
-
-This repo provides a modern PyTorch implementation/interface for training RL agents in TORCS. It uses a Gymnasium environment interface and provides configurable training and evaluation tracks.
+Model-free deep reinforcement learning in TORCS.
 
 <p align="center">
   <img src="./assets/td3_racing_gif.gif">
@@ -10,160 +8,76 @@ This repo provides a modern PyTorch implementation/interface for training RL age
 
 <p align="center"> <em>Gif: Trained TD3 policy racing on Alpine-1.</em> </p>
 
-## Implemented Algoritms
+## Algorithms
 
-* DDPG (N-Step)
-* TD3 (N-Step)
-* SAC (N-Step; Not evaluated yet - due to limited compute)
-* TD7 (Not evaluated yet - due to limited compute )
+* DDPG: ["Continuous control with deep reinforcement learning"](https://arxiv.org/abs/1509.02971), Lillicrap et al., 2015
 
-## Environment
+* TD3: ["Addressing Function Approximation Error in Actor-Critic Methods"](https://arxiv.org/abs/1802.09477), Fujimoto et al., 2018
 
-|                                    |                                                                                                  |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Action Space                       | `Box(-1.0, 1.0, (2,), float32)`                                                                  |
-| Observation Space                  | `Box(-1.0, 1.0, (45,), float32)`                                                                 |
-| Observation Space (`vision=True`)  | `Dict("state": Box(-1.0, 1.0, (45,), float32), "image": Box(0, 255, (H, W, 3), uint8))`          |
-| import                             | `gym.make("TorcsSCR-v0")`                                                                        |
+* SAC: ["Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor"](https://arxiv.org/abs/1801.01290), Haaranoja et al., 2018
 
-### Action Space
-
-The action is an `ndarray` with shape `(2,)`. Gears are shifted automatically.
-
-| Num | Action                                              | Min  | Max |
-| --- | --------------------------------------------------- | ---- | --- |
-| 0   | Steering, `-1` is full right, `1` is full left      | -1.0 | 1.0 |
-| 1   | Throttle, positive values accelerate, negative brake | -1.0 | 1.0 |
-
-### Observation Space (proprioceptive state-vector)
-
-The observation is an `ndarray` with shape `(45,)`. Every sensor is scaled to `[-1, 1]` with the constants in `gym_torcs/constants.py`,
-then Gaussian noise (`observation_noise=0.025`) is added and the result is clipped to `[-1, 1]`.
-
-| Num   | Observation                                                                        | Min  | Max | Scaled from          |
-| ----- | ---------------------------------------------------------------------------------- | ---- | --- | -------------------- |
-| 0-2   | Speed along the car's x, y, z axes                                                 | -1.0 | 1.0 | ±250 km/h            |
-| 3-5   | Acceleration along the car's x, y, z axes                                          | -1.0 | 1.0 | ±50 m/s²             |
-| 6     | Engine rpm                                                                         | -1.0 | 1.0 | 0 – 10,000 rpm       |
-| 7     | Angle between the car's heading and the track axis                                 | -1.0 | 1.0 | ±π rad               |
-| 8     | Lateral position on the track, `-1` is the right edge, `1` the left edge           | -1.0 | 1.0 | track width          |
-| 9-27  | 19 track edge range finders at -45°, -19°, -12°, -7°, -4°, -2.5°, -1.7°, -1°, -0.5°, 0°, 0.5°, 1°, 1.7°, 2.5°, 4°, 7°, 12°, 19°, 45° | -1.0 | 1.0 | 0 – 200 m |
-| 28-31 | Wheel spin velocities (front left, front right, rear left, rear right)             | -1.0 | 1.0 | 0 – 100 rad/s        |
-| 32    | Lateral offset from the racing line of the `tita` robot                            | -1.0 | 1.0 | ±2 track half-widths |
-| 33-44 | Racing line curvature 0, 25, 50, ..., 275 m ahead of the car                       | -1.0 | 1.0 | ±0.1 1/m             |
-
-`HistoryWrapper(env, horizon_obs, horizon_act)` stacks the last `horizon_obs` observations and `horizon_act` actions (oldest first),
-giving a `Box(-1.0, 1.0, (45 * horizon_obs + 2 * horizon_act,), float32)`, e.g. `(141,)` for `horizon_obs=3, horizon_act=3`.
-
-### Observation Space (RGB image)
-
-With `vision=True` (requires `render_mode="human"`) the observation is a `Dict`:
-
-| Key       | Space                                    | Description                                                         |
-| --------- | ---------------------------------------- | ------------------------------------------------------------------- |
-| `"state"` | `Box(-1.0, 1.0, (45,), float32)`         | The vector observation above                                        |
-| `"image"` | `Box(0, 255, (H, W, 3), uint8)`          | RGB image of the TORCS window, `(H, W) = image_shape`, default `(64, 64)` |
-
-`HistoryWrapper` only supports the vector observation.
-
-## Experiment
-
-Note that due to my limited compute resources, I evaluated only two algorithms: DDPG and TD3. Each algorithm was trained on the six training tracks and evaluated on the three validation tracks every 10,000 timesteps. Each algorithm was trained for 5 million timesteps and evaluated across three different seeds.
-
-#### Training and Validation Tracks
-
-<p align="center">
-  <img src="./assets/train_val_tracks.png">
-</p>
-
-<p align="center"> <em>Figure 1: Training and validation tracks. Alpine-1, Aalborg, Street-1, Forza, Wheel-1, and Wheel-2 are used for training, while G-Track-2, Brondehach, and Alpine-2 are used for validation.</em> </p>
-
-<p align="center">
-  <img src="./assets/learning_curves.png">
-</p>
-
-<p align="center"> <em>Figure 2: Learning curves of DDPG and TD3 on training and validation tracks. </em> </p>
-
-#### Results
-
-#### Hyperparameters
-
-| Algorithm | Timesteps | Actor LR | Critic LR | N-Steps | Batch size | Buffer size | Start steps | Discount | Polyak τ | Policy delay | Exploration |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| DDPG | 5,000,000 | 3e-4 | 3e-4 | 3 | 256 | 1,000,000 | 10,000 | 0.992 | 0.005 | 2 | Gaussian, σ = 0.1 |
-| TD3 | 5,000,000 | 3e-4 | 3e-4 | 3 | 256 | 1,000,000 | 10,000 | 0.992 | 0.005 | 2 | Gaussian, σ = 0.1 |
+* TD7: ["For SALE: State-Action Representation Learning for Deep Reinforcement Learning"](https://arxiv.org/abs/2306.02451), Fujimoto et al., 2023
 
 
 ## Usage
 
-### Racing lines
-
-The look-ahead curvature is computed from racing lines recorded with the `tita` robot, stored in `data/<track>.csv`.
-Record them for all experiment tracks (existing files are skipped unless `--overwrite` is given):
+Before training, record the racing lines the environment needs (see [`gym_torcs/README.md`](gym_torcs/README.md#racing-lines)):
 
 ```bash
 python scripts/collect_racing_lines.py --laps 10
-python scripts/collect_racing_lines.py forza alpine-2 --overwrite
 ```
 
 ### Training
 
-`scripts/train.py` trains on the six training tracks, switching track every 50,000 steps, and evaluates on all nine tracks every 10,000 steps.
-Track lists and hyperparameters live in `scripts/configs.py`.
-
-```bash
-python scripts/train.py --algorithm td3 --seed 0 --device cuda   # ddpg, nstepddpg, td3, nsteptd3, sac, nstepsac, td7
-./scripts/run.sh --device cuda                                   # the README experiment: DDPG and TD3, seeds 0-2
-```
-
-Each environment drives one SCR robot slot, so every environment needs its own port in `3001..3010`.
-The validation env uses `--port + 1`; give parallel runs ports at least two apart.
-Checkpoints and evaluation statistics are written to `./checkpoints`.
-
-### Watching an agent drive
-
-`scripts/evaluate.py` opens the TORCS window and drives a checkpoint on the training and validation tracks, printing lap times and a summary.
-
-```bash
-python scripts/evaluate.py checkpoints/nstepsac/<run>/actor-nstepsac-<step>.pt
-python scripts/evaluate.py <actor.pt> --tracks brondehach alpine-2 --laps 3
-python scripts/evaluate.py --expert --tracks aalborg               # the tita robot, for comparison
-```
-
-### Environment
-
 ```python
-import gymnasium as gym
-import gym_torcs
-from gym_torcs import HistoryWrapper, TimedTrackSelectionWrapper, TrackSpec
+from gym_torcs import HistoryWrapper, TimedTrackSelectionWrapper, TorcsEnv, TrackSpec
+from torcsrl import TD3
 
-env = gym.make("TorcsSCR-v0", port=3001, track=TrackSpec("forza", "road"))
-env = HistoryWrapper(env, horizon_obs=3, horizon_act=3)
-env = TimedTrackSelectionWrapper(env, [TrackSpec("forza"), TrackSpec("alpine-1")], switch_every_steps=50_000)
+# Select training tracks
+TRAIN_TRACKS = [TrackSpec(name) for name in ["alpine-1", "aalborg", "street-1", "forza", "wheel-1", "wheel-2"]]
 
-obs, info = env.reset(seed=0)
-obs, reward, terminated, truncated, info = env.step(info["action_tita"])  # tita's action
+# Select validation tracks
+VAL_TRACKS = [TrackSpec(name) for name in ["g-track-2", "brondehach", "alpine-2"]]
+
+# History observation wrapper settings
+#
+# NOTE: This is really important to prevent the agent from "shaky steering control"...
+# Thanks to Antonin Raffin, he found that the solution to smooth the control is to constrain the change in steering angle while augmenting the input with the history of previous commands.
+# Read more here:
+# https://medium.com/data-science/learning-to-drive-smoothly-in-minutes-450a7cdb35f4
+# https://github.com/araffin/learning-to-drive-in-5-minutes 
+HISTORY_OBS, HISTORY_ACT = 3, 3
+
+# Agent drives one track at a time and switches to the next track every 50k steps.
+TRAIN_SWITCH_EVERY_STEPS = 50_000
+
+# Share of training episodes that start somewhere on the lap instead of the grid.
+# Validation always starts on the grid.
+TRAIN_RANDOM_START = 0.8
+
+train_env = TorcsEnv(port=3001, track=TRAIN_TRACKS[0], random_start=TRAIN_RANDOM_START)
+train_env = HistoryWrapper(train_env, HISTORY_OBS, HISTORY_ACT)
+train_env = TimedTrackSelectionWrapper(train_env, TRAIN_TRACKS, switch_every_steps=TRAIN_SWITCH_EVERY_STEPS)
+
+val_env = TorcsEnv(port=3002, track=VAL_TRACKS[0])
+val_env = HistoryWrapper(val_env, HISTORY_OBS, HISTORY_ACT)
+val_env = TimedTrackSelectionWrapper(val_env, TRAIN_TRACKS + VAL_TRACKS, switch_every_steps=1)
+
+# Horizon = 1 / (1 - gamma) = ~333.33 steps = ~6.67seconds
+GAMMA = 0.997
+
+# Number of env steps
+TRAINING_STEPS = 5_000_000
+
+agent = TD3(train_env, val_env, ac_kwargs={"h1_dim": 256, "h2_dim": 256}, gamma=GAMMA, device="cuda")
+agent.train(TRAINING_STEPS)
 ```
-
-### Vision
-
-```python
-env = gym.make("TorcsSCR-v0", render_mode="human", vision=True, image_shape=(64, 64))
-obs, info = env.reset()
-obs["state"]  # (45,) float32
-obs["image"]  # (64, 64, 3) uint8 RGB
-```
-
-Frames are copied from the TORCS window through shared memory, so vision needs `render_mode="human"`,
-a visible window and `xte` (package `xautomation`) to start the race.
-TORCS writes about ten frames per simulated second, while the agent acts 50 times per second.
-Only one vision environment can run per machine.
 
 ## Install
 
-### Ubuntu 26.04
+Tested on Ubuntu 26.04 and Fedora Linux 44 Workstation.
 
-#### Install TORCS 1.3.7 with the SCR server patch
+### 1. TORCS 1.3.7 with the SCR server patch
 
 1. Clone the TORCS repository:
 
@@ -178,6 +92,9 @@ cd torcs-1.3.7
 ```
 
 3. Install the required packages:
+
+<details open>
+<summary><b>Ubuntu 26.04</b></summary>
 
 ```bash
 sudo apt install -y \
@@ -205,64 +122,10 @@ sudo apt install -y \
     xautomation
 ```
 
-4. Build and install TORCS:
+</details>
 
-```bash
-make
-sudo make install
-sudo make datainstall
-```
-
-#### Install `torcsrl`
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/raphaelsenn/torcsrl
-```
-
-2. Enter the repository:
-
-```bash
-cd torcsrl
-```
-
-3. Create and activate a conda environment:
-
-```bash
-conda create -n torcsrl python=3.11 -y
-conda activate torcsrl
-```
-
-4. Install the Python requirements:
-
-```bash
-pip install -r requirements.txt
-```
-
-5. Install `torcsrl` in editable mode:
-
-```bash
-pip install -e .
-```
-
-### Fedora Linux 44 Workstation
-
-#### Install TORCS 1.3.7 with the SCR server patch
-
-1. Clone the TORCS repository:
-
-```bash
-git clone https://github.com/raphaelsenn/torcs-1.3.7
-```
-
-2. Enter the repository:
-
-```bash
-cd torcs-1.3.7
-```
-
-3. Install the required packages:
+<details>
+<summary><b>Fedora Linux 44 Workstation</b></summary>
 
 ```bash
 sudo dnf install \
@@ -290,6 +153,8 @@ sudo dnf install \
   xautomation
 ```
 
+</details>
+
 4. Build and install TORCS:
 
 ```bash
@@ -304,7 +169,7 @@ You should now be able to start TORCS with:
 sudo torcs
 ```
 
-#### Install `torcsrl`
+### 2. `torcsrl`
 
 1. Clone the repository:
 
@@ -335,6 +200,54 @@ pip install -r requirements.txt
 
 ```bash
 pip install -e .
+```
+
+## Experiment
+
+DDPG and TD3 were each trained for 5M timesteps on six tracks, with three seeds per algorithm.
+Every 10,000 steps the policy is evaluated on three held-out tracks to see whether it generalises.
+The agents only get the 39-dim state vector (no images); see [`gym_torcs/README.md`](gym_torcs/README.md)
+for what's in it and how the reward works.
+
+<p align="center">
+  <img src="./assets/tracks_curvature.png">
+</p>
+
+<p align="center"> <em>Figure 1: Training (blue) and validation (orange) tracks, colored by the curvature of the racing line.</em> </p>
+
+### Results (state vector, no vision)
+
+<p align="center">
+  <img src="./assets/curves_return.png">
+</p>
+
+<p align="center"> <em>Figure 2: Return on training and validation tracks. </em> </p>
+
+<p align="center">
+  <img src="./assets/curves_lap_completion_rate.png">
+</p>
+
+<p align="center"> <em>Figure 3: Share of evaluations that completed a lap. </em> </p>
+
+<p align="center">
+  <img src="./assets/curves_distance_raced.png">
+</p>
+
+<p align="center"> <em>Figure 4: Distance raced per evaluation. </em> </p>
+
+### Hyperparameters
+
+| Algorithm | Timesteps | Actor LR | Critic LR | N-Steps | Batch size | Buffer size | Start steps | Discount | Polyak τ | Policy delay | Exploration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| DDPG | 5,000,000 | 3e-4 | 3e-4 | 3 | 256 | 1,000,000 | 10,000 | 0.992 | 0.005 | 2 | Gaussian, σ = 0.1 |
+| TD3 | 5,000,000 | 3e-4 | 3e-4 | 3 | 256 | 1,000,000 | 10,000 | 0.992 | 0.005 | 2 | Gaussian, σ = 0.1 |
+
+### Reproducing the Experiment
+
+Just run: 
+
+```bash
+bash ./scripts/run.sh
 ```
 
 ## Citations
@@ -369,7 +282,6 @@ pip install -e .
       primaryClass={cs.LG},
       url={https://arxiv.org/abs/1801.01290}, 
 }
-
 
 @misc{fujimoto2023salestateactionrepresentationlearning,
       title={For SALE: State-Action Representation Learning for Deep Reinforcement Learning}, 

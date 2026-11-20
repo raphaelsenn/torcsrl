@@ -6,7 +6,6 @@ Example:
 """
 
 import argparse
-import random
 
 from gym_torcs import TorcsEnv, TrackSpec
 
