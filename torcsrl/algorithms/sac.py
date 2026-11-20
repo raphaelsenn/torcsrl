@@ -31,10 +31,11 @@ class SAC(OffPolicyAlgorithm):
         lr_actor: float = 0.0003,
         lr_critic: float = 0.0003,
         lr_alpha: float = 0.0003,
-        gamma: float = 0.992,
+        gamma: float = 0.99,
         tau_polyak: float = 0.005,
         buffer_size: int = 1_000_000,
         buffer_start_size: int = 10_000,
+        warmup: str = "random",
         batch_size: int = 256,
         gradient_steps: int = 1,
         save_every: int = 10_000,
@@ -51,6 +52,7 @@ class SAC(OffPolicyAlgorithm):
             tau_polyak=tau_polyak,
             buffer_size=buffer_size,
             buffer_start_size=buffer_start_size,
+            warmup=warmup,
             batch_size=batch_size,
             gradient_steps=gradient_steps,
             save_every=save_every,
@@ -185,7 +187,7 @@ class SAC(OffPolicyAlgorithm):
             self.grad_step_counter += 1         # NOTE: INCREASE GRADIENT STEP COUNTER
 
     def train(self, n_timesteps: int) -> None:
-        obs, info = self.collect_n_step_rollouts()
+        obs, info = self.collect_rollouts()
 
         self.episode_counter = 1
         self.grad_step_counter = 1
@@ -208,21 +210,3 @@ class SAC(OffPolicyAlgorithm):
 
         self.val_env.close()
         self.env.close()
-
-    def collect_n_step_rollouts(self) -> tuple[np.ndarray, Dict[str, Any]]:
-        env = self.env  # NOTE: Training environment
-        env.action_space.seed(self.seed)
-        obs, info = env.reset(seed=self.seed)
-
-        for _ in range(self.buffer_start_size):
-            # Sample random action and step environment.
-            action = env.action_space.sample()
-            obs_next, reward, terminated, truncated, info = env.step(action)
-
-            self.replay_buffer.push(obs, action, reward, obs_next, terminated)
-            obs = obs_next  # NOTE: Set obs to next observation!!!
-
-            if terminated or truncated:
-                obs, info = env.reset()
-
-        return obs, info

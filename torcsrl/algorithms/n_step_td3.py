@@ -31,10 +31,11 @@ class NStepTD3(OffPolicyAlgorithm):
         lr_actor: float = 0.0003,
         lr_critic: float = 0.0003,
         n_steps: int = 3,
-        gamma: float = 0.992,
+        gamma: float = 0.99,
         tau_polyak: float = 0.005,
-        buffer_size: int = 3_000_000,
+        buffer_size: int = 1_000_000,
         buffer_start_size: int = 10_000,
+        warmup: str = "random",
         batch_size: int = 256,
         exploration_noise: float = 0.1,
         noise_target_network: float = 0.2,
@@ -55,6 +56,7 @@ class NStepTD3(OffPolicyAlgorithm):
             tau_polyak=tau_polyak,
             buffer_size=buffer_size,
             buffer_start_size=buffer_start_size,
+            warmup=warmup,
             batch_size=batch_size,
             gradient_steps=gradient_steps,
             save_every=save_every,
@@ -215,38 +217,29 @@ class NStepTD3(OffPolicyAlgorithm):
 
         r_queue.popleft()
 
-    def collect_n_step_rollouts(self) -> tuple[np.ndarray, Dict[str, Any]]:
-        env = self.env  # NOTE: Training environment
-        env.action_space.seed(self.seed)
-        obs, info = env.reset(seed=self.seed)
-
-        s_queue = deque([obs], maxlen=self.n_steps + 1)
+    def collect_n_step_rollouts(self) -> tuple[np.ndarray, Dict[str, Any], tuple[deque, deque, deque]]:
+        """Run the warm-up and store it as n-step transitions."""
+        s_queue = deque([], maxlen=self.n_steps + 1)
         a_queue = deque([], maxlen=self.n_steps)
         r_queue = deque([], maxlen=self.n_steps)
 
-        for _ in range(self.buffer_start_size):
-            # Sample random action and step environment.
-            action = env.action_space.sample()
-            obs_next, reward, terminated, truncated, info = env.step(action)
-
-            # Update queues
+        def on_transition(obs, action, reward, obs_next, terminated, truncated):
+            if not s_queue:
+                s_queue.append(obs)
             s_queue.append(obs_next)
             a_queue.append(action)
             r_queue.append(reward)
 
-            # Push on replay buffer
             if len(s_queue) == self.n_steps + 1:
                 self.push_n_step_transition(s_queue, a_queue, r_queue, terminated)
 
             if terminated or truncated:
                 while len(a_queue) > 0:
-                    self.push_n_step_transition(s_queue, a_queue, r_queue, terminated)       
-
-            obs = obs_next  # NOTE: Set obs to next observation!!!
-
-            if terminated or truncated:
-                obs, info = env.reset()
+                    self.push_n_step_transition(s_queue, a_queue, r_queue, terminated)
                 s_queue.clear(); a_queue.clear(); r_queue.clear()
-                s_queue.append(obs)
 
+        obs, info = self.collect_rollouts(on_transition)
+
+        s_queue.clear(); a_queue.clear(); r_queue.clear()
+        s_queue.append(obs)
         return obs, info, (s_queue, a_queue, r_queue)

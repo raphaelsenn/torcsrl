@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from gymnasium.spaces import Box
 
-from torcsrl.models.base import Actor, Critic
+from torcsrl.models.base import Actor, Critic, init_last_layer
 
 
 class ActorMLP(Actor):
@@ -27,6 +27,8 @@ class ActorMLP(Actor):
 
         self.mu = nn.Linear(hidden_dim, self.action_dim)
         self.log_std = nn.Linear(hidden_dim, self.action_dim)
+        init_last_layer(self.mu)
+        init_last_layer(self.log_std)
 
     def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         obs_enc = self.mlp(obs)
@@ -70,6 +72,8 @@ class CriticMLP(Critic):
             
             nn.Linear(hidden_dim, 1)
         )
+        init_last_layer(self.Q1[-1])
+        init_last_layer(self.Q2[-1])
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         cat = torch.cat([obs, action], dim=-1) 

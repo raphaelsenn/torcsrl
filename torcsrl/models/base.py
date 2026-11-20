@@ -7,6 +7,16 @@ import torch
 import torch.nn as nn
 
 
+def init_last_layer(layer: nn.Linear, bound: float = 3e-3) -> None:
+    """Init an output layer with small weights (Lillicrap et al., 2015).
+
+    New actors then start near the middle of the action range, and new critics near 0.
+    """
+    nn.init.uniform_(layer.weight, -bound, bound)
+    if layer.bias is not None:
+        nn.init.uniform_(layer.bias, -bound, bound)
+
+
 class Actor(nn.Module, ABC):
     def __init__(
             self, 

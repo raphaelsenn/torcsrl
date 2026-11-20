@@ -27,10 +27,11 @@ class DDPG(OffPolicyAlgorithm):
         lr_critic: float,
         ac_kwargs: Dict[str, Any] = DEFAULT_AC_KWARGS,
         gamma: float = 0.99,
-        tau_polyak: float = 0.001,
-        buffer_size: int = 5_000_000,
-        buffer_start_size: int = 50_000,
-        batch_size: int = 32,
+        tau_polyak: float = 0.005,
+        buffer_size: int = 1_000_000,
+        buffer_start_size: int = 10_000,
+        warmup: str = "random",
+        batch_size: int = 256,
         exploration_noise: float = 0.1,
         gradient_steps: int = 1,
         policy_delay: int = 2,
@@ -48,6 +49,7 @@ class DDPG(OffPolicyAlgorithm):
             tau_polyak=tau_polyak,
             buffer_size=buffer_size,
             buffer_start_size=buffer_start_size,
+            warmup=warmup,
             batch_size=batch_size,
             gradient_steps=gradient_steps,
             save_every=save_every,
@@ -136,8 +138,7 @@ class DDPG(OffPolicyAlgorithm):
 
 
     def train(self, n_timesteps: int) -> None:
-        # obs, info = self.collect_rollouts()
-        obs, info = self.collect_expert_rollouts()
+        obs, info = self.collect_rollouts()
 
         self.episode_counter = 1
         self.grad_step_counter = 1

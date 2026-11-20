@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Callable, Dict
 
 import os
 import time
@@ -9,7 +9,7 @@ import numpy as np
 import gymnasium as gym
 
 from torcsrl.models.base import Actor, Critic
-from torcsrl.evaluation.evaluation_stats import EvluationStats
+from torcsrl.evaluation.evaluation_stats import EpisodeStats, EvaluationStats
 from torcsrl.buffers.replay_buffer import ReplayBuffer
 from torcsrl.buffers.rollout_buffer import RolloutBuffer
 
@@ -77,10 +77,12 @@ class RLAlgorithm(ABC):
         self.grad_step_counter = 0
         self.global_step_counter = 0
 
-        # Evaluation stats, one entry per validation track ("category/name")
-        self.eval_stats: dict[str, EvluationStats] = {}
+        # Evaluation stats
+        # One entry per validation track ("category/name")
+        self.eval_stats: dict[str, EvaluationStats] = {}
 
-        # Evaluating/saving is due once these steps are reached (see on_episode_end)
+        # Evaluating/saving is due once these steps are reached (see in function on_episode_end)
+        # This is because TORCS env can't stop while training... :/
         self.next_eval_step = eval_every
         self.next_save_step = save_every
         self.last_eval_time = time.monotonic()
@@ -124,7 +126,7 @@ class RLAlgorithm(ABC):
             done = False
             n_steps = 0
             speed_sum = 0.0
-            episode_reward = 0.0
+            episode_return = 0.0
 
             while not done:
                 action = self.act_numpy(obs, deterministic=True)
@@ -132,21 +134,11 @@ class RLAlgorithm(ABC):
                 done = terminated or truncated
 
                 n_steps += 1
-                episode_reward += reward
-                speed_sum += float(info.get("speedX", 0.0))
+                episode_return += reward
+                speed_sum += float(info.get("speed", 0.0))
 
-            # NOTE: `info` now holds the info of the last step of the episode
-            stats = self.eval_stats.setdefault(track_key, EvluationStats())
-            stats.update(
-                step=self.global_step_counter,
-                rewards=episode_reward,
-                distance=float(info.get("distRaced", 0.0)),
-                time_alive=float(info.get("timeAlive", 0.0)),
-                mean_speed=speed_sum / n_steps,
-                successful=int(info.get("successfulLap", False)),
-                damage=float(info.get("damage", 0.0)),
-                lap_time=float(info.get("lastLapTime", 0.0)),
-            )
+            episode = EpisodeStats.from_episode(self.global_step_counter, episode_return, speed_sum / max(n_steps, 1), info)
+            self.eval_stats.setdefault(track_key, EvaluationStats()).add(episode)
 
     def set_seeds(self) -> None:
         random.seed(self.seed)
@@ -160,10 +152,11 @@ class RLAlgorithm(ABC):
         torch.backends.cudnn.benchmark = False
 
     def on_episode_end(self) -> None:
-        """Call this when a training episode ends: evaluates and/or saves if due.
+        """
+        Call this when a training episode ends: evaluates and/or saves if due.
 
         Evaluating/saving only happens between episodes, so a running episode
-        on the TORCS server is never interrupted.
+        on the TORCS server is never interrupted...
         """
         step = self.global_step_counter
 
@@ -193,17 +186,18 @@ class RLAlgorithm(ABC):
         print(header)
 
         for track_key, stats in self.eval_stats.items():
-            if len(stats.steps_) == 0:
+            e = stats.latest
+            if e is None:
                 continue
 
             report = (
                 f"  Track: {track_key:<20s}  "
-                f"Return: {stats.last_average_reward:>12.4f}  "
-                f"Distance: {stats.last_average_distance:>12.4f}  "
-                f"Speed: {stats.last_average_speed:>10.4f}  "
-                f"Damage: {stats.last_average_damage:>10.4f}  "
-                f"Lap time: {stats.last_lap_time:>12.4f}  "
-                f"Lap: {stats.last_successful_laps:>1d}/1"
+                f"Return: {e.episode_return:>10.2f}  "
+                f"Distance: {e.distance_raced:>8.1f} m  "
+                f"Speed: {e.average_speed:>6.1f} km/h  "
+                f"Damage: {e.damage:>7.1f}  "
+                f"Lap time: {e.lap_time:>7.2f} s  "
+                f"End: {e.end_reason}"
             )
             print(report)
     
@@ -236,6 +230,7 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
         buffer_start_size: int,
         batch_size: int,
         gradient_steps: int,
+        warmup: str = "random",
         save_every: int,
         eval_every: int,
         verbose: bool = True,
@@ -257,11 +252,13 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
 
         self.buffer_size = buffer_size
         self.buffer_start_size = buffer_start_size
+        if warmup not in ("random", "expert"):
+            raise ValueError(f"warmup must be 'random' or 'expert', got {warmup!r}.")
+        self.warmup = warmup
         self.batch_size = batch_size
         self.gradient_steps = gradient_steps
 
         self.replay_buffer = ReplayBuffer(
-        # self.replay_buffer = ReplayBuffer(
             obs_dim=self.obs_dim,
             action_dim=self.action_dim,
             capacity=buffer_size,
@@ -269,46 +266,49 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
             device=device,
         )
 
-    def collect_rollouts(self) -> tuple[np.ndarray, Dict[str, Any]]:
+    def collect_rollouts(self, on_transition: Callable[..., None] | None = None) -> tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Fill the replay buffer with buffer_start_size steps before training.
+
+        self.warmup picks the actions: "random" or "expert" (tita).
+        The steps are split evenly over the training tracks.
+        """
+        if on_transition is None:
+            def on_transition(obs, action, reward, obs_next, terminated, truncated):
+                self.replay_buffer.push(obs, action, reward, obs_next, terminated)
+
         env = self.env  # NOTE: Training environment
-
         env.action_space.seed(self.seed)
-        obs, info = env.reset(seed=self.seed)
-        
-        for _ in range(self.buffer_start_size):
-            # Sample random action and step environment.
-            action = env.action_space.sample()
-            obs_next, reward, terminated, truncated, _ = env.step(action)
-            
-            # Save in replay memory.
-            self.replay_buffer.push(obs, action, reward, obs_next, terminated)
 
-            obs = obs_next
-            if terminated or truncated:
-                obs, info = env.reset()
+        def warmup_action(info: Dict[str, Any]) -> np.ndarray:
+            if self.warmup == "expert":
+                return np.asarray(info["expert_action"], dtype=np.float32)
+            return env.action_space.sample()
 
-        return obs, info
+        # Use the inner env, so the track wrapper does not change tracks or count these steps.
+        tracks = list(getattr(env, "tracks", [None]))
+        inner = env.env if hasattr(env, "tracks") else env
+        steps_per_track = -(-self.buffer_start_size // len(tracks))     # ceil
 
-    def collect_expert_rollouts(self) -> tuple[np.ndarray, Dict[str, Any]]:
-        env = self.env  # NOTE: Training environment
+        for i, track in enumerate(tracks):
+            options = {"track": track} if track is not None else None
+            obs, info = inner.reset(seed=self.seed + i, options=options)
+            for step in range(steps_per_track):
+                action = warmup_action(info)
+                obs_next, reward, terminated, truncated, info = inner.step(action)
 
-        env.action_space.seed(self.seed)
-        obs, info = env.reset(seed=self.seed)
+                last = step == steps_per_track - 1
+                on_transition(obs, action, reward, obs_next, terminated, truncated or last)
 
-        for _ in range(self.buffer_start_size):
-            # Use expert tita action 
-            action = np.asarray(info["action_tita"], dtype=np.float32)
-            obs_next, reward, terminated, truncated, info = env.step(action)
-            
-            # Save in replay memory.
-            self.replay_buffer.push(obs, action, reward, obs_next, terminated)
+                obs = obs_next
+                if (terminated or truncated) and not last:
+                    obs, info = inner.reset(options=options)
 
-            obs = obs_next
-            if terminated or truncated:
-                print(f"|B| = {len(self.replay_buffer)}")
-                obs, info = env.reset()
+            if self.verbose:
+                name = getattr(track, "name", "env")
+                print(f"{self.warmup.capitalize()} warm-up on {name}: |B| = {len(self.replay_buffer)}")
 
-        return obs, info
+        return env.reset(seed=self.seed)
 
 
 class OnPolicyAlgorithm(RLAlgorithm, ABC):

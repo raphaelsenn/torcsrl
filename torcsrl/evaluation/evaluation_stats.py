@@ -1,141 +1,67 @@
-from typing import List
-from dataclasses import dataclass, field
+import math
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
 
+@dataclass(frozen=True)
+class EpisodeStats:
+    """Results of one evaluation episode."""
+
+    timesteps: int
+    episode_return: float
+    episode_steps: int
+    distance_raced: float       # m
+    average_speed: float        # km/h
+    damage: float
+    laps_completed: int
+    lap_time: float             # s, NaN if no lap was finished
+    end_reason: str | None
+
+    @classmethod
+    def from_episode(
+        cls,
+        timesteps: int,
+        episode_return: float,
+        average_speed: float,
+        info: dict[str, Any],
+    ) -> "EpisodeStats":
+        """Build from the episode return, the average speed and the last step's info."""
+        episode_steps = int(info.get("episode_steps", 0))
+        laps_completed = int(info.get("laps_completed", 0))
+        return cls(
+            timesteps=timesteps,
+            episode_return=float(episode_return),
+            episode_steps=episode_steps,
+            distance_raced=float(info.get("distance_raced", 0.0)),
+            average_speed=float(average_speed),
+            damage=float(info.get("damage", 0.0)),
+            laps_completed=laps_completed,
+            lap_time=float(info["lap_time"]) if laps_completed > 0 else math.nan,
+            end_reason=info.get("end_reason"),
+        )
+
+
 @dataclass
-class EvluationStats:
-    steps_: List[int] = field(default_factory=list)
-    average_rewards_: List[float] = field(default_factory=list)
-    std_rewards_: List[float] = field(default_factory=list)
-    
-    average_speed_: List[float] = field(default_factory=list)
-    succesfull_laps_: List[int] = field(default_factory=list)
-    
-    average_distance_: List[float] = field(default_factory=list)
-    min_distance_: List[float] = field(default_factory=list)
-    max_distance_: List[float] = field(default_factory=list)
+class EvaluationStats:
+    """All evaluations on one track."""
 
+    episodes: list[EpisodeStats] = field(default_factory=list)
 
-    lap_time_: List[float] = field(default_factory=list)
-    average_time_alive_: List[float] = field(default_factory=list)
-    min_time_alive_: List[float] = field(default_factory=list)
-    max_time_alive_: List[float] = field(default_factory=list)
-    
-    average_damage_: List[float] = field(default_factory=list)
+    def add(self, episode: EpisodeStats) -> None:
+        self.episodes.append(episode)
 
-    def update(
-            self, 
-            step: int, 
-            rewards: np.ndarray, 
-            distance: np.ndarray, 
-            time_alive: np.ndarray, 
-            mean_speed: np.ndarray,
-            successful: np.ndarray,
-            damage: np.ndarray,
-            lap_time: np.ndarray
-    ) -> None:
-        average_return = float(np.mean(rewards).item())
-        std_return = float(np.std(rewards).item())
-        
-        average_speed = float(np.mean(mean_speed).item())
-        
-        average_distance = float(np.mean(distance).item())
-        min_distance = float(np.min(distance))
-        max_distance = float(np.max(distance))
+    @property
+    def latest(self) -> EpisodeStats | None:
+        return self.episodes[-1] if self.episodes else None
 
-        average_time_alive = float(np.mean(time_alive).item())
-        min_time_alive = float(np.min(time_alive))
-        max_time_alive = float(np.max(time_alive))
-
-        self.steps_.append(step)
-        self.average_rewards_.append(average_return)
-        self.std_rewards_.append(std_return)
-
-        self.average_speed_.append(average_speed)
-
-        self.average_distance_.append(average_distance)
-        self.min_distance_.append(min_distance)
-        self.max_distance_.append(max_distance)
-
-        self.lap_time_.append(lap_time) 
-        self.average_time_alive_.append(average_time_alive)
-        self.min_time_alive_.append(min_time_alive)
-        self.max_time_alive_.append(max_time_alive)
-
-        self.succesfull_laps_.append(int(np.sum(successful)))
-        
-        self.average_damage_.append(np.mean(damage))
+    def to_dataframe(self) -> pd.DataFrame:
+        columns = list(EpisodeStats.__dataclass_fields__)
+        return pd.DataFrame([asdict(e) for e in self.episodes], columns=columns)
 
     def to_csv(self, path: str) -> None:
-        data = {
-            "timesteps": self.steps_, 
-            
-            "average_return": self.average_rewards_,
-            "std_return": self.std_rewards_,
-            
-            "average_speed": self.average_speed_,
-            
-            "average_distance": self.average_distance_,
-            "min_distance": self.min_distance_,
-            "max_distance": self.max_distance_,
+        self.to_dataframe().to_csv(path, index=False)
 
-            "lap_time"  : self.lap_time_, 
-            "average_time_alive": self.average_time_alive_,
-            "min_time_alive": self.min_time_alive_,
-            "max_time_alive": self.max_time_alive_,
-            
-            "successful_laps": self.succesfull_laps_,
-            "average_damage": self.average_damage_,
-        }
-        pd.DataFrame.from_dict(data).to_csv(path, index=False)
-
-    @property
-    def last_average_reward(self) -> float:
-        return self.average_rewards_[-1]
-    
-    @property
-    def last_std_reward(self) -> float:
-        return self.std_rewards_[-1]
-    
-    @property
-    def last_average_speed(self) -> float:
-        return self.average_speed_[-1]
-    
-    @property
-    def last_average_distance(self) -> float:
-        return self.average_distance_[-1]
-    
-    @property
-    def last_min_distance(self) -> float:
-        return self.min_distance_[-1]
-    
-    @property
-    def last_max_distance(self) -> float:
-        return self.max_distance_[-1]
-    
-    @property
-    def last_lap_time(self) -> float:
-        return self.lap_time_[-1]
-    
-    @property
-    def last_average_time_alive(self) -> float:
-        return self.average_time_alive_[-1]
-    
-    @property
-    def last_min_time_alive(self) -> float:
-        return self.min_time_alive_[-1]
-    
-    @property
-    def last_max_time_alive(self) -> float:
-        return self.max_time_alive_[-1]
-    
-    @property
-    def last_successful_laps(self) -> int:
-        return self.succesfull_laps_[-1]
-    
-    @property
-    def last_average_damage(self) -> int:
-        return self.average_damage_[-1]
+    def __len__(self) -> int:
+        return len(self.episodes)

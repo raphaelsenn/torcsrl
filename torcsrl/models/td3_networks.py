@@ -29,7 +29,6 @@ class ActorMLP(Actor):
             nn.Linear(h2_dim, self.action_dim),
             nn.Tanh()
         )
-        self.init_xavier_uniform()
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.action_scale * self.mlp(obs) + self.action_bias
@@ -71,7 +70,6 @@ class CriticMLP(Critic):
             
             nn.Linear(h2_dim, 1)
         )
-        self.init_xavier_uniform()
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         cat = torch.cat([obs, action], dim=-1) 
