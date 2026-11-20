@@ -5,27 +5,40 @@ import gymnasium as gym
 from gym_torcs import HistoryWrapper, TimedTrackSelectionWrapper, TorcsEnv, TrackSpec
 from torcsrl import DDPG, SAC, TD3, TD7, NStepDDPG, NStepSAC, NStepTD3
 
-TRAIN_TRACKS = [TrackSpec(name) for name in ["alpine-1", "aalborg", "street-1", "forza", "wheel-1", "wheel-2"]]
-VAL_TRACKS = [TrackSpec(name) for name in ["g-track-2", "brondehach", "alpine-2"]]
 
-# The agent sees the last 3 observations and actions.
+# Training tracks ordered by difficulty (difficulty = my own experience playing TORCS :D)
+TRAIN_TRACKS = [TrackSpec(name) for name in [
+    "e-track-4", "forza", "g-track-1", "wheel-1", "eroad", "g-track-3",
+    "wheel-2", "corkscrew", "street-1", "e-track-2", "alpine-1", "aalborg",
+]]
+
+# Validation tracks ordered by difficulty
+VAL_TRACKS = [TrackSpec(name) for name in [
+    "g-track-2", "e-track-6", "ruudskogen", "brondehach", "alpine-2", "e-track-1",
+]]
+
+# NOTE: TORCS runs at 50 Hz, therefore the agent acts 50 times a second
+# A history helps ensure the markov property.
+# For automonous driving/racing read this: 
+# https://medium.com/data-science/learning-to-drive-smoothly-in-minutes-450a7cdb35f4
 HISTORY_OBS = 3
 HISTORY_ACT = 3
 
+# Agent drives one track at a time and switches to the next every 50k steps.
+TRAIN_SWITCH_EVERY_STEPS = 50_000
 
-def make_env(tracks: list[TrackSpec], switch_every_steps: int, **env_kwargs) -> gym.Env:
-    """TorcsEnv with history stacking that cycles through ``tracks``."""
-    env = TorcsEnv(track=tracks[0], **env_kwargs)
-    env = HistoryWrapper(env, HISTORY_OBS, HISTORY_ACT)
-    return TimedTrackSelectionWrapper(env, tracks, switch_every_steps)
+# Share of training episodes that start somewhere on the lap instead of the grid.
+# Validation always starts on the grid.
+TRAIN_RANDOM_START = 0.8
 
-
+# Hyperparameters
 COMMON = {
     "lr_actor": 3e-4,
     "lr_critic": 3e-4,
-    "gamma": 0.992,
-    "buffer_size": 1_000_000,
-    "buffer_start_size": 10_000,
+    "gamma": 0.997,                 # Horizon = 1 / (1 - gamma) = ~333 steps = ~6.67s
+    "buffer_size": 5_000_000,
+    "buffer_start_size": 25_000,    # Warmup steps on training track
+    "warmup": "random",             # Warmup policy; "random" or "expert" (tita)
     "batch_size": 256,
     "save_every": 10_000,
     "eval_every": 10_000,
@@ -36,8 +49,6 @@ N_STEP = {"n_steps": 3, "tau_polyak": 0.005}
 MLP = {"ac_kwargs": {"h1_dim": 256, "h2_dim": 256}}
 SAC_MLP = {"lr_alpha": 3e-4, "ac_kwargs": {"hidden_dim": 256}}
 
-# CLI name -> (algorithm class, hyperparameters)
-# Keys equal the lowercased class name so evaluate.py can infer them from checkpoint names.
 ALGORITHMS = {
     "ddpg": (DDPG, {**COMMON, **TD_STYLE, **ONE_STEP, **MLP}),
     "nstepddpg": (NStepDDPG, {**COMMON, **TD_STYLE, **N_STEP, **MLP}),
@@ -47,3 +58,20 @@ ALGORITHMS = {
     "nstepsac": (NStepSAC, {**COMMON, **N_STEP, **SAC_MLP}),
     "td7": (TD7, {**COMMON, **TD_STYLE, "lr_encoder": 3e-4, "ac_kwargs": {"hidden_dim": 256, "zs_dim": 256}}),
 }
+
+
+def wrap_env(env: gym.Env) -> gym.Env:
+    """History stacking of the last observations and actions."""
+    return HistoryWrapper(env, HISTORY_OBS, HISTORY_ACT)
+
+
+def make_train_env(tracks: list[TrackSpec], **env_kwargs) -> gym.Env:
+    """Wrapped TorcsEnv that cycles through `tracks`, switching every `TRAIN_SWITCH_EVERY_STEPS` steps."""
+    env = wrap_env(TorcsEnv(track=tracks[0], random_start=TRAIN_RANDOM_START, **env_kwargs))
+    return TimedTrackSelectionWrapper(env, tracks, switch_every_steps=TRAIN_SWITCH_EVERY_STEPS)
+
+
+def make_val_env(tracks: list[TrackSpec], **env_kwargs) -> gym.Env:
+    """Wrapped TorcsEnv that cycles through `tracks`, one episode per track."""
+    env = wrap_env(TorcsEnv(track=tracks[0], **env_kwargs))
+    return TimedTrackSelectionWrapper(env, tracks, switch_every_steps=1)
