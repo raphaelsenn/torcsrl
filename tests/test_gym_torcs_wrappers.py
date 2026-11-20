@@ -12,14 +12,14 @@ class TestHistoryWrapper:
         env = HistoryWrapper(FakeEnv(), horizon_obs=3, horizon_act=2)
         assert env.observation_space.shape == (3 * OBS_DIM + 2 * ACTION_DIM,)
 
-    def test_reset_puts_the_observation_last_and_zeros_the_rest(self) -> None:
+    def test_reset_repeats_the_first_observation_and_zeros_the_actions(self) -> None:
         env = HistoryWrapper(FakeEnv(), horizon_obs=3, horizon_act=2)
         history, _ = env.reset(seed=0)
 
         observations = history[: 3 * OBS_DIM].reshape(3, OBS_DIM)
         actions = history[3 * OBS_DIM:]
-        assert np.all(observations[:2] == 0.0)
         assert np.any(observations[2] != 0.0)
+        assert np.all(observations == observations[2])
         assert np.all(actions == 0.0)
 
     def test_step_shifts_the_history_oldest_first(self) -> None:
@@ -27,7 +27,7 @@ class TestHistoryWrapper:
         history, _ = env.reset(seed=0)
         first_obs = history[OBS_DIM: 2 * OBS_DIM].copy()
 
-        action = np.array([0.5, -0.5], dtype=np.float32)
+        action = np.array([0.5, -0.5, 0.25], dtype=np.float32)
         history, *_ = env.step(action)
 
         assert np.array_equal(history[:OBS_DIM], first_obs)         # moved one slot back

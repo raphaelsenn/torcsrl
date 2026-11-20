@@ -17,7 +17,7 @@ from gymnasium import spaces
 from gym_torcs.constants import LOOKAHEAD_DISTANCES
 
 OBS_DIM = 6
-ACTION_DIM = 2
+ACTION_DIM = 3
 EPISODE_LENGTH = 20
 
 
@@ -36,14 +36,14 @@ class FakeEnv(gym.Env):
         super().reset(seed=seed)
         self.steps = 0
         self.resets += 1
-        info = {"action_tita": np.zeros(ACTION_DIM, dtype=np.float32), "options": options}
+        info = {"expert_action": np.zeros(ACTION_DIM, dtype=np.float32), "options": options}
         return self._obs(), info
 
     def step(self, action):
         self.steps += 1
         reward = -float(np.abs(action).sum())
         truncated = self.steps >= self.episode_length
-        info = {"action_tita": np.zeros(ACTION_DIM, dtype=np.float32), "speedX": 10.0}
+        info = {"expert_action": np.zeros(ACTION_DIM, dtype=np.float32), "speed": 10.0}
         return self._obs(), reward, False, truncated, info
 
     def close(self) -> None:

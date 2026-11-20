@@ -1,6 +1,26 @@
+import socket
+
 import pytest
 
-from gym_torcs.client import Action, parse_sensors
+from gym_torcs.core.client import Action, TorcsClient, parse_sensors
+
+
+class TestTorcsClient:
+    def test_receive_returns_the_newest_message_and_drops_stale_ones(self) -> None:
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind(("127.0.0.1", 0))
+        client = TorcsClient(*server.getsockname())
+        try:
+            client.send(Action())                       # lets the server learn the client address
+            _, client_address = server.recvfrom(4096)
+            for t in (1, 2, 3):
+                server.sendto(f"(curLapTime {t})".encode(), client_address)
+
+            assert client.receive(timeout=1.0) == {"curLapTime": 3.0}
+            assert client.stale_messages == 2
+        finally:
+            client.close()
+            server.close()
 
 
 class TestParseSensors:
