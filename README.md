@@ -30,7 +30,8 @@ python scripts/collect_racing_lines.py --laps 10
 ### Training
 
 ```python
-from gym_torcs import HistoryWrapper, TimedTrackSelectionWrapper, TorcsEnv, TrackSpec
+from gym_torcs import TorcsEnv, TrackSpec
+from gym_torcs import HistoryWrapper, ActionRepeatWrapper, TimedTrackSelectionWrapper
 from torcsrl import TD3
 
 # Select training tracks
@@ -38,6 +39,10 @@ TRAIN_TRACKS = [TrackSpec(name) for name in ["alpine-1", "aalborg", "street-1", 
 
 # Select validation tracks
 VAL_TRACKS = [TrackSpec(name) for name in ["g-track-2", "brondehach", "alpine-2"]]
+
+# Repeat actions for this many steps
+# ACTION_REPEAT = 2 reduces 50Hz to 25Hz
+ACTION_REPEAT = 2
 
 # History observation wrapper settings
 #
@@ -48,23 +53,27 @@ VAL_TRACKS = [TrackSpec(name) for name in ["g-track-2", "brondehach", "alpine-2"
 # https://github.com/araffin/learning-to-drive-in-5-minutes 
 HISTORY_OBS, HISTORY_ACT = 3, 3
 
-# Agent drives one track at a time and switches to the next track every 50k steps.
-TRAIN_SWITCH_EVERY_STEPS = 50_000
+# Agent drives one track at a time and switches to the next track every 25k steps.
+TRAIN_SWITCH_EVERY_STEPS = 25_000
 
 # Share of training episodes that start somewhere on the lap instead of the grid.
 # Validation always starts on the grid.
-TRAIN_RANDOM_START = 0.8
+TRAIN_RANDOM_START = 0.5
 
+# Training env
 train_env = TorcsEnv(port=3001, track=TRAIN_TRACKS[0], random_start=TRAIN_RANDOM_START)
+train_env = ActionRepeatWrapper(train_env, ACTION_REPEAT)
 train_env = HistoryWrapper(train_env, HISTORY_OBS, HISTORY_ACT)
 train_env = TimedTrackSelectionWrapper(train_env, TRAIN_TRACKS, switch_every_steps=TRAIN_SWITCH_EVERY_STEPS)
 
+# Validation env
 val_env = TorcsEnv(port=3002, track=VAL_TRACKS[0])
+val_env = ActionRepeatWrapper(val_env, ACTION_REPEAT)
 val_env = HistoryWrapper(val_env, HISTORY_OBS, HISTORY_ACT)
 val_env = TimedTrackSelectionWrapper(val_env, TRAIN_TRACKS + VAL_TRACKS, switch_every_steps=1)
 
-# Horizon = 1 / (1 - gamma) = ~333.33 steps = ~6.67seconds
-GAMMA = 0.997
+# Horizon = 1 / (1 - gamma) = ~167 steps at 25 Hz = ~6.67s
+GAMMA = 0.994
 
 # Number of env steps
 TRAINING_STEPS = 5_000_000
