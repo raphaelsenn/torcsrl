@@ -251,6 +251,8 @@ and validated on 6 held-out tracks
 
 <p align="center"> <em>Figure 5: Distance raced per evaluation. </em> </p>
 
+### TODO: Detailed Analysis is COMMING SOON
+
 ### Hyperparameters
 
 Shared by all algorithms:
