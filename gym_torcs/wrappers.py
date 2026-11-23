@@ -40,6 +40,28 @@ class TimedTrackSelectionWrapper(gym.Wrapper):
         return self.env.step(action)
 
 
+class ActionRepeatWrapper(gym.Wrapper):
+    """Repeat each action ``repeats`` times and sum the rewards (TORCS runs at 50 Hz, so 2 -> 25 Hz).
+
+    Stops early when the episode ends during a repeat; info is from the last inner step.
+    """
+
+    def __init__(self, env: gym.Env, repeats: int) -> None:
+        super().__init__(env)
+        if repeats <= 0:
+            raise ValueError("repeats must be positive.")
+        self.repeats = repeats
+
+    def step(self, action):
+        total_reward = 0.0
+        for _ in range(self.repeats):
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            total_reward += float(reward)
+            if terminated or truncated:
+                break
+        return obs, total_reward, terminated, truncated, info
+
+
 class HistoryWrapper(gym.Wrapper):
     """Observe the last ``horizon_obs`` observations and ``horizon_act`` actions, oldest first.
 

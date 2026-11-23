@@ -222,6 +222,10 @@ class RLAlgorithm(ABC):
 
 class OffPolicyAlgorithm(RLAlgorithm, ABC):
     """Base actor-critic off-policy algorithm class designed for deep reinforcement learning in TORCS.""" 
+
+    # Std of the Gaussian noise on tita actions (warmup="expert_noisy")
+    EXPERT_NOISE = 0.2
+
     def __init__(
         self,
         train_env: gym.Env,
@@ -256,8 +260,8 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
 
         self.buffer_size = buffer_size
         self.buffer_start_size = buffer_start_size
-        if warmup not in ("random", "expert"):
-            raise ValueError(f"warmup must be 'random' or 'expert', got {warmup!r}.")
+        if warmup not in ("random", "expert", "expert_noisy"):
+            raise ValueError(f"warmup must be 'random', 'expert' or 'expert_noisy', got {warmup!r}.")
         self.warmup = warmup
         self.batch_size = batch_size
         self.gradient_steps = gradient_steps
@@ -274,7 +278,8 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
         """
         Fill the replay buffer with buffer_start_size steps before training.
 
-        self.warmup picks the actions: "random" or "expert" (tita).
+        self.warmup picks the actions: "random", "expert" (tita) or "expert_noisy"
+        (tita + Gaussian noise with std EXPERT_NOISE, clipped to the action space).
         The steps are split evenly over the training tracks.
         """
         if on_transition is None:
@@ -283,11 +288,16 @@ class OffPolicyAlgorithm(RLAlgorithm, ABC):
 
         env = self.env  # NOTE: Training environment
         env.action_space.seed(self.seed)
+        rng = np.random.default_rng(self.seed)
 
         def warmup_action(info: Dict[str, Any]) -> np.ndarray:
-            if self.warmup == "expert":
-                return np.asarray(info["expert_action"], dtype=np.float32)
-            return env.action_space.sample()
+            if self.warmup == "random":
+                return env.action_space.sample()
+            action = np.asarray(info["expert_action"], dtype=np.float32)
+            if self.warmup == "expert_noisy":
+                action = action + rng.normal(0.0, self.EXPERT_NOISE, size=action.shape).astype(np.float32)
+                action = np.clip(action, env.action_space.low, env.action_space.high)
+            return action
 
         # Use the inner env, so the track wrapper does not change tracks or count these steps.
         tracks = list(getattr(env, "tracks", [None]))

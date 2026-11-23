@@ -1,6 +1,6 @@
 # Deep Reinforcement Learning on TORCS
 
-Model-free deep reinforcement learning in TORCS.
+Model-free off-policy deep reinforcement learning on TORCS.
 
 <p align="center">
   <img src="./assets/td3_racing_gif.gif">
@@ -215,7 +215,7 @@ for what's in it and how the reward works.
 
 <p align="center"> <em>Figure 1: Training (blue) and validation (orange) tracks, colored by the curvature of the racing line.</em> </p>
 
-### Results (state vector, no vision)
+### Results
 
 <p align="center">
   <img src="./assets/curves_return.png">
@@ -224,16 +224,22 @@ for what's in it and how the reward works.
 <p align="center"> <em>Figure 2: Return on training and validation tracks. </em> </p>
 
 <p align="center">
+  <img src="./assets/curves_lap_time.png">
+</p>
+
+<p align="center"> <em>Figure 3: Lap time per evaluation. </em> </p>
+
+<p align="center">
   <img src="./assets/curves_lap_completion_rate.png">
 </p>
 
-<p align="center"> <em>Figure 3: Share of evaluations that completed a lap. </em> </p>
+<p align="center"> <em>Figure 4: Share of evaluations that completed a lap. </em> </p>
 
 <p align="center">
   <img src="./assets/curves_distance_raced.png">
 </p>
 
-<p align="center"> <em>Figure 4: Distance raced per evaluation. </em> </p>
+<p align="center"> <em>Figure 5: Distance raced per evaluation. </em> </p>
 
 ### Hyperparameters
 
