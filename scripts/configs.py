@@ -52,11 +52,12 @@ COMMON = {
     "save_every": 10_000,
     "eval_every": 10_000,
 }
+
 TD_STYLE = {"exploration_noise": 0.1, "policy_delay": 2}
 ONE_STEP = {"tau_polyak": 0.005}
 N_STEP = {"n_steps": 3, "tau_polyak": 0.005}
 MLP = {"ac_kwargs": {"h1_dim": 512, "h2_dim": 512}}
-SAC_MLP = {"lr_alpha": 3e-4, "ac_kwargs": {"h1_dim": 256, "h2_dim": 256}}
+SAC_MLP = {"lr_alpha": 3e-4, "ac_kwargs": {"h1_dim": 512, "h2_dim": 512}}
 
 ALGORITHMS = {
     "ddpg": (DDPG, {**COMMON, **TD_STYLE, **ONE_STEP, **MLP}),
@@ -65,7 +66,7 @@ ALGORITHMS = {
     "nsteptd3": (NStepTD3, {**COMMON, **TD_STYLE, **N_STEP, **MLP}),
     "sac": (SAC, {**COMMON, **ONE_STEP, **SAC_MLP}),
     "nstepsac": (NStepSAC, {**COMMON, **N_STEP, **SAC_MLP}),
-    "td7": (TD7, {**COMMON, **TD_STYLE, "lr_encoder": 3e-4, "ac_kwargs": {"hidden_dim": 256, "zs_dim": 256}}),
+    "td7": (TD7, {**COMMON, **TD_STYLE, "lr_encoder": 3e-4, "ac_kwargs": {"hidden_dim": 512, "zs_dim": 256}}),
 }
 
 

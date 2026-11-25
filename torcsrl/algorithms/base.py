@@ -87,6 +87,10 @@ class RLAlgorithm(ABC):
         self.next_save_step = save_every
         self.last_eval_time = time.monotonic()
 
+        # Best evaluation so far (mean return over validation tracks), see save_best()
+        self.best_eval_return = -float("inf")
+        self.best_eval_step = -1
+
         # Reproducability
         self.seed = seed 
         self.torch_rng = torch.Generator(device=self.device)
@@ -170,6 +174,13 @@ class RLAlgorithm(ABC):
             # Save the exact model that produced the printed eval stats
             self.save()
 
+            # Additionally keep the best model of the entire run
+            eval_return = self.latest_eval_return()
+            if eval_return > self.best_eval_return:
+                self.best_eval_return = eval_return
+                self.best_eval_step = step
+                self.save_best()
+
             self.next_eval_step = (step // self.eval_every + 1) * self.eval_every
             self.next_save_step = (step // self.save_every + 1) * self.save_every
 
@@ -205,11 +216,36 @@ class RLAlgorithm(ABC):
         """Networks written to disk by save(), saved as <name>-<algorithm>-<step>.pt."""
         return {"actor": self.actor, "critic": self.critic}
 
-    def save(self) -> None:
+    def latest_eval_return(self) -> float:
+        """Mean return of the latest evaluation over all validation tracks."""
+        returns = [s.latest.episode_return for s in self.eval_stats.values() if s.latest is not None]
+        return float(np.mean(returns)) if returns else -float("inf")
+
+    def checkpoint_dir(self) -> str:
         algo_name = self.__class__.__name__.lower()
         run_name = f"{algo_name}-lr_pi{self.lr_actor}-lr_q{self.lr_critic}-seed{self.seed}"
         save_dir = os.path.join("checkpoints", algo_name, run_name)
         os.makedirs(save_dir, exist_ok=True)
+        return save_dir
+
+    def save_best(self) -> None:
+        """Overwrite <name>-<algorithm>-best.pt with the current networks."""
+        algo_name = self.__class__.__name__.lower()
+        save_dir = self.checkpoint_dir()
+
+        for name, net in self.checkpoint_networks().items():
+            torch.save(net.state_dict(), os.path.join(save_dir, f"{name}-{algo_name}-best.pt"))
+
+        with open(os.path.join(save_dir, "best.txt"), "w") as f:
+            f.write(f"step {self.best_eval_step}\nmean_eval_return {self.best_eval_return}\n")
+
+        if self.verbose:
+            print(f"  New best model (mean eval return {self.best_eval_return:.2f}) saved.")
+
+    def save(self) -> None:
+        algo_name = self.__class__.__name__.lower()
+        save_dir = self.checkpoint_dir()
+        run_name = os.path.basename(save_dir)
 
         for name, net in self.checkpoint_networks().items():
             torch.save(net.state_dict(), os.path.join(save_dir, f"{name}-{algo_name}-{self.global_step_counter}.pt"))

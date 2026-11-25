@@ -8,8 +8,10 @@ Examples:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from configs import ALGORITHMS, TRAIN_TRACKS, VAL_TRACKS, wrap_env
@@ -17,20 +19,33 @@ from gym_torcs import TorcsEnv, TrackSpec
 
 
 def load_agent(env, checkpoint: Path, device: str):
-    """Build the agent named in the checkpoint file (actor-<algorithm>-<step>.pt) and load its actor."""
+    """Build only the actor MLP named in the checkpoint file (actor-<algorithm>-<step>.pt) and load its weights."""
     name = checkpoint.stem.split("-")[1]
     by_class = {cls.__name__.lower(): (cls, config) for cls, config in ALGORITHMS.values()}
     if name not in by_class:
         raise SystemExit(f"Unknown algorithm {name!r} in {checkpoint.name}.")
     cls, config = by_class[name]
 
-    agent = cls(env, env, device=device, **{**config, "buffer_size": config["batch_size"], "verbose": False})
-    agent.actor.load_state_dict(torch.load(checkpoint, map_location=device))
-    if hasattr(agent, "encoder_fixed"):    # TD7: the actor also needs the encoder saved next to it
+    if name == "td7":    # TD7's actor also needs the encoder saved next to it, so build the full agent
+        agent = cls(env, env, device=device, **{**config, "buffer_size": config["batch_size"], "verbose": False})
+        agent.actor.load_state_dict(torch.load(checkpoint, map_location=device))
         encoder = checkpoint.with_name(checkpoint.name.replace("actor-", "encoder-", 1))
         agent.encoder_fixed.load_state_dict(torch.load(encoder, map_location=device))
-    agent.actor.eval()
-    return agent
+        agent.actor.eval()
+        return agent.act_numpy
+
+    actor_cls = sys.modules[cls.__module__].ActorMLP
+    obs_dim = int(np.prod(env.observation_space.shape))
+    actor = actor_cls(obs_dim, env.action_space, **config.get("ac_kwargs", {})).to(device)
+    actor.load_state_dict(torch.load(checkpoint, map_location=device))
+    actor.eval()
+
+    @torch.no_grad()
+    def policy(obs: np.ndarray) -> np.ndarray:
+        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+        return actor.act(obs_t).flatten().cpu().numpy()
+
+    return policy
 
 
 def run_episode(env, agent, track: TrackSpec, seed: int, laps: int) -> str:
@@ -39,7 +54,7 @@ def run_episode(env, agent, track: TrackSpec, seed: int, laps: int) -> str:
     total_reward, lap_times, done = 0.0, [], False
 
     while not done and len(lap_times) < laps:
-        action = info["expert_action"] if agent is None else agent.act_numpy(obs)
+        action = info["expert_action"] if agent is None else agent(obs)
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         done = terminated or truncated
@@ -76,7 +91,7 @@ def main() -> None:
 
     for name in args.tracks:
         for episode in range(args.episodes):
-            print(run_episode(env, agent(name), args.seed + episode, args.laps))
+            print(run_episode(env, agent, TrackSpec(name), args.seed + episode, args.laps))
     env.close()
 
 
