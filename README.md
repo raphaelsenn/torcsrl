@@ -82,6 +82,92 @@ agent = TD3(train_env, val_env, ac_kwargs={"h1_dim": 256, "h2_dim": 256}, gamma=
 agent.train(TRAINING_STEPS)
 ```
 
+## Experiment
+
+* DDPG, TD3, SAC and TD7 were each trained for 5M environment steps on 12 training tracks
+and validated on 6 held-out tracks
+
+* The agent drives one training track at a time and moves on to the next one every 25,000 steps
+
+* Every 10,000 steps the policy is evaluated for one episode on each of the 18 tracks (12 training + 6 validation)
+
+* At the beginning of training the replay buffer is filled with 25,000 transitions from the `tita` expert bot with added Gaussian noise.
+
+
+| Split | Tracks |
+| --- | --- |
+| Training (12) | e-track-4, forza, g-track-1, wheel-1, eroad, g-track-3, wheel-2, corkscrew, street-1, e-track-2, alpine-1, aalborg |
+| Validation (6) | michigan, g-track-2, e-track-6, ruudskogen, brondehach, alpine-2 |
+
+<p align="center">
+  <img src="./assets/tracks_curvature.png">
+</p>
+
+<p align="center"> <em>Figure 1: Training (blue) and validation (orange) tracks, colored by the curvature of the racing line.</em> </p>
+
+### Results
+
+<p align="center">
+  <img src="./assets/curves_return.png">
+</p>
+
+<p align="center"> <em>Figure 2: Return on training and validation tracks. </em> </p>
+
+<p align="center">
+  <img src="./assets/curves_lap_time.png">
+</p>
+
+<p align="center"> <em>Figure 3: Lap time per evaluation. </em> </p>
+
+<p align="center">
+  <img src="./assets/curves_lap_completion_rate.png">
+</p>
+
+<p align="center"> <em>Figure 4: Share of evaluations that completed a lap. </em> </p>
+
+<p align="center">
+  <img src="./assets/curves_distance_raced.png">
+</p>
+
+<p align="center"> <em>Figure 5: Distance raced per evaluation. </em> </p>
+
+### TODO: Detailed Analysis is COMMING SOON
+
+### Hyperparameters
+
+Shared by all algorithms:
+
+| Setting | Value |
+| --- | --- |
+| Timesteps | 5,000,000 |
+| Action repeat | 2 (25 Hz) |
+| History (obs / actions) | 3 / 3 |
+| Track switch every | 25,000 steps |
+| Random start probability | 0.5 (training only) |
+| Optimizer | Adam |
+| Discount γ | 0.994 (horizon ≈ 167 steps ≈ 6.7 s) |
+| Batch size | 256 |
+| Buffer size | 5,000,000 |
+| Warmup | 25,000 steps, noisy `tita` expert |
+| Evaluation | every 10,000 steps, 1 episode per track |
+
+Per algorithm:
+
+| Algorithm | Actor LR | Critic LR | Other LR | Hidden units | Polyak τ | Policy delay | Exploration | Extra |
+| --- | ---: | ---: | --- | --- | ---: | ---: | --- | --- |
+| DDPG | 3e-4 | 3e-4 | – | 512, 512 | 0.005 | 2 | Gaussian, σ = 0.1 | – |
+| TD3 | 3e-4 | 3e-4 | – | 512, 512 | 0.005 | 2 | Gaussian, σ = 0.1 | target noise σ = 0.2, clip 0.5 |
+| SAC | 3e-4 | 3e-4 | α: 3e-4 | 256, 256 | 0.005 | – | stochastic policy | learned temperature α |
+| TD7 | 3e-4 | 3e-4 | encoder: 3e-4 | 256 (z<sub>s</sub> dim 256) | – (hard update every 250 steps) | 2 | Gaussian, σ = 0.1 | LAP (α = 0.4, min priority 1), target noise σ = 0.2, clip 0.5 |
+
+### Reproducing the Experiment
+
+Just run: 
+
+```bash
+bash ./scripts/run.sh
+```
+
 ## Install
 
 Tested on Ubuntu 26.04 and Fedora Linux 44 Workstation.
@@ -209,92 +295,6 @@ pip install -r requirements.txt
 
 ```bash
 pip install -e .
-```
-
-## Experiment
-
-* DDPG, TD3, SAC and TD7 were each trained for 5M environment steps on 12 training tracks
-and validated on 6 held-out tracks
-
-* The agent drives one training track at a time and moves on to the next one every 25,000 steps
-
-* Every 10,000 steps the policy is evaluated for one episode on each of the 18 tracks (12 training + 6 validation)
-
-* At the beginning of training the replay buffer is filled with 25,000 transitions from the `tita` expert bot with added Gaussian noise.
-
-
-| Split | Tracks |
-| --- | --- |
-| Training (12) | e-track-4, forza, g-track-1, wheel-1, eroad, g-track-3, wheel-2, corkscrew, street-1, e-track-2, alpine-1, aalborg |
-| Validation (6) | michigan, g-track-2, e-track-6, ruudskogen, brondehach, alpine-2 |
-
-<p align="center">
-  <img src="./assets/tracks_curvature.png">
-</p>
-
-<p align="center"> <em>Figure 1: Training (blue) and validation (orange) tracks, colored by the curvature of the racing line.</em> </p>
-
-### Results
-
-<p align="center">
-  <img src="./assets/curves_return.png">
-</p>
-
-<p align="center"> <em>Figure 2: Return on training and validation tracks. </em> </p>
-
-<p align="center">
-  <img src="./assets/curves_lap_time.png">
-</p>
-
-<p align="center"> <em>Figure 3: Lap time per evaluation. </em> </p>
-
-<p align="center">
-  <img src="./assets/curves_lap_completion_rate.png">
-</p>
-
-<p align="center"> <em>Figure 4: Share of evaluations that completed a lap. </em> </p>
-
-<p align="center">
-  <img src="./assets/curves_distance_raced.png">
-</p>
-
-<p align="center"> <em>Figure 5: Distance raced per evaluation. </em> </p>
-
-### TODO: Detailed Analysis is COMMING SOON
-
-### Hyperparameters
-
-Shared by all algorithms:
-
-| Setting | Value |
-| --- | --- |
-| Timesteps | 5,000,000 |
-| Action repeat | 2 (25 Hz) |
-| History (obs / actions) | 3 / 3 |
-| Track switch every | 25,000 steps |
-| Random start probability | 0.5 (training only) |
-| Optimizer | Adam |
-| Discount γ | 0.994 (horizon ≈ 167 steps ≈ 6.7 s) |
-| Batch size | 256 |
-| Buffer size | 5,000,000 |
-| Warmup | 25,000 steps, noisy `tita` expert |
-| Evaluation | every 10,000 steps, 1 episode per track |
-
-Per algorithm:
-
-| Algorithm | Actor LR | Critic LR | Other LR | Hidden units | Polyak τ | Policy delay | Exploration | Extra |
-| --- | ---: | ---: | --- | --- | ---: | ---: | --- | --- |
-| DDPG | 3e-4 | 3e-4 | – | 512, 512 | 0.005 | 2 | Gaussian, σ = 0.1 | – |
-| TD3 | 3e-4 | 3e-4 | – | 512, 512 | 0.005 | 2 | Gaussian, σ = 0.1 | target noise σ = 0.2, clip 0.5 |
-| SAC | 3e-4 | 3e-4 | α: 3e-4 | 256, 256 | 0.005 | – | stochastic policy | learned temperature α |
-| TD7 | 3e-4 | 3e-4 | encoder: 3e-4 | 256 (z<sub>s</sub> dim 256) | – (hard update every 250 steps) | 2 | Gaussian, σ = 0.1 | LAP (α = 0.4, min priority 1), target noise σ = 0.2, clip 0.5 |
-
-### Reproducing the Experiment
-
-Just run: 
-
-```bash
-bash ./scripts/run.sh
 ```
 
 ## Citations
