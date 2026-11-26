@@ -66,7 +66,7 @@ ALGORITHMS = {
     "nsteptd3": (NStepTD3, {**COMMON, **TD_STYLE, **N_STEP, **MLP}),
     "sac": (SAC, {**COMMON, **ONE_STEP, **SAC_MLP}),
     "nstepsac": (NStepSAC, {**COMMON, **N_STEP, **SAC_MLP}),
-    "td7": (TD7, {**COMMON, **TD_STYLE, "lr_encoder": 3e-4, "ac_kwargs": {"hidden_dim": 512, "zs_dim": 256}}),
+    "td7": (TD7, {**COMMON, **TD_STYLE, "lr_encoder": 3e-4, "ac_kwargs": {"hidden_dim": 256, "zs_dim": 256}}),
 }
 
 

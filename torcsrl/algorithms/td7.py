@@ -161,13 +161,15 @@ class TD7(OffPolicyAlgorithm):
 
                 # Clipped double Q-learning
                 q1_tgt_next, q2_tgt_next = self.critic_target(obs_next, action_next, fixed_target_zsa, fixed_target_zs)
-                q_tgt_next = torch.min(q1_tgt_next, q2_tgt_next).clamp(self.min, self.max)    # [B, 1]
+                q_tgt_next = torch.min(q1_tgt_next, q2_tgt_next)    # [B, 1]
 
-                # n-step TD target
-                td_target = ret + self.gamma * (1.0 - done) * q_tgt_next.view(-1)     # [B] 
+                # TD target with value clipping (bounds frozen at the last target update)
+                q_tgt_next = q_tgt_next.clamp(self.min_target, self.max_target)
+                td_target = ret + self.gamma * (1.0 - done) * q_tgt_next.view(-1)     # [B]
 
-                self.max = max(self.max, float(q_tgt_next.max()))
-                self.min = min(self.min, float(q_tgt_next.min()))
+                # Track the range of the full targets for the next clipping bounds
+                self.max = max(self.max, float(td_target.max()))
+                self.min = min(self.min, float(td_target.min()))
 
                 fixed_zs = self.encoder_fixed.zs(obs)
                 fixed_zsa = self.encoder_fixed.zsa(fixed_zs, action)

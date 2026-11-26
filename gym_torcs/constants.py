@@ -70,3 +70,47 @@ TRACK_CATEGORIES = {
         "dirt-1", "dirt-2", "dirt-3", "dirt-4", "dirt-5", "dirt-6", "mixed-1", "mixed-2",
     ], "dirt"),
 }
+
+# Return of tita on each track (one lap from the start position)
+TITA_RETURNS = {
+    "e-track-4": 4511.56,
+    "forza": 3820.59,
+    "g-track-1": 1348.95,
+    "wheel-1": 2732.95,
+    "eroad": 1924.58,
+    "g-track-3": 1853.45,
+    "wheel-2": 3859.45,
+    "corkscrew": 2220.90,
+    "street-1": 2392.33,
+    "e-track-2": 3301.29,
+    "alpine-1": 3855.23,
+    "aalborg": 1619.31,
+    "michigan": 1584.82,
+    "g-track-2": 2069.63,
+    "e-track-6": 2755.46,
+    "ruudskogen": 2111.69,
+    "brondehach": 2479.91,
+    "alpine-2": 2365.30,
+}
+
+# Track to length mapping, in m. From the TORCS track gallery (https://torcs.sourceforge.net/tracks/)
+TRACK_LENGTHS = {
+    "e-track-4": 7040.00,
+    "forza": 5780.00,
+    "g-track-1": 2060.00,
+    "wheel-1": 4330.00,
+    "eroad": 3260.00,
+    "g-track-3": 2840.00,
+    "wheel-2": 6210.00,
+    "corkscrew": 3610.00,
+    "street-1": 3820.00,
+    "e-track-2": 5380.00,
+    "alpine-1": 6360.00,
+    "aalborg": 2590.00,
+    "michigan": 2310.00,
+    "g-track-2": 3190.00,
+    "e-track-6": 4440.00,
+    "ruudskogen": 3270.00,
+    "brondehach": 3920.00,
+    "alpine-2": 3770.00,
+}
